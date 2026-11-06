@@ -28,6 +28,7 @@ class TelegramNotifierTest {
         verify(client).execute(captor.capture());
         assertEquals("55", captor.getValue().getChatId());
         assertEquals("Привет", captor.getValue().getText());
+        assertEquals("HTML", captor.getValue().getParseMode());
     }
 
     @Test

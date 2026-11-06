@@ -42,7 +42,13 @@ public class NotificatorBot implements SpringLongPollingBot, LongPollingSingleTh
 
     private static final Logger log = LoggerFactory.getLogger(NotificatorBot.class);
 
-    static final String ERROR_TEXT = "Что-то пошло не так, попробуй ещё раз позже.";
+    static final String ERROR_TEXT = "😵 Что-то пошло не так, попробуй ещё раз позже.";
+
+    /**
+     * Режим разметки сообщений: тексты содержат HTML-теги (&lt;b&gt;, &lt;i&gt;, &lt;s&gt;, &lt;code&gt;).
+     * Всё, что вводит пользователь, экранируется через {@link com.example.notificator.util.Html#escape}.
+     */
+    static final String HTML = "HTML";
 
     private final String botToken;
     private final TelegramClient telegramClient;
@@ -101,6 +107,7 @@ public class NotificatorBot implements SpringLongPollingBot, LongPollingSingleTh
         SendMessage message = SendMessage.builder()
                 .chatId(chatId)
                 .text(reply.text())
+                .parseMode(HTML)
                 .replyMarkup(toMarkup(reply.buttons()))
                 .build();
         try {
@@ -148,6 +155,7 @@ public class NotificatorBot implements SpringLongPollingBot, LongPollingSingleTh
                         .chatId(chatId)
                         .messageId(messageId)
                         .text(response.view().text())
+                        .parseMode(HTML)
                         .replyMarkup(toMarkup(response.view().buttons()))
                         .build());
             } catch (TelegramApiException e) {

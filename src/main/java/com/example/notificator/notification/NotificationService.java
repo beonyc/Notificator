@@ -13,7 +13,9 @@ import com.example.notificator.service.TrackerService;
 import com.example.notificator.stats.ReportFormatter;
 import com.example.notificator.stats.StatsService;
 import com.example.notificator.stats.WeeklyStats;
+import com.example.notificator.util.Html;
 import com.example.notificator.util.Plurals;
+import com.example.notificator.util.Visuals;
 import java.time.Clock;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
@@ -156,24 +158,26 @@ public class NotificationService {
 
         StringBuilder sb = new StringBuilder();
         if (!yesterday.isEmpty()) {
-            long done = yesterday.stream().filter(TaskEntry::isDone).count();
-            long total = yesterday.size();
+            int done = (int) yesterday.stream().filter(TaskEntry::isDone).count();
+            int total = yesterday.size();
+            int percent = Visuals.percent(done, total);
+            sb.append(Visuals.bar(percent)).append(' ').append(percent).append("%\n");
             sb.append("Вчера выполнено ").append(done).append(" из ").append(total)
-                    .append(" (").append(Math.round(done * 100.0 / total)).append("%).\n");
+                    .append(" (").append(percent).append("%).\n");
             sb.append(done == total
-                    ? "Красава, день закрыт полностью."
+                    ? "🎉 Красава, день закрыт полностью."
                     : "Не доделано: " + (total - done) + ". Сегодня без отговорок.\n"
-                            + "Выполнил, но не успел отметить? Исправь: /week → «Дела по дням» → вчера.");
+                            + "💡 Выполнил, но не успел отметить? Исправь: /week → «Дела по дням» → вчера.");
         }
         if (!todayItems.isEmpty()) {
             if (!sb.isEmpty()) {
                 sb.append("\n\n");
             }
-            sb.append("Сегодня в списке: ").append(todayItems.size()).append(' ')
+            sb.append("📋 Сегодня в списке: ").append(todayItems.size()).append(' ')
                     .append(Plurals.plural(todayItems.size(), "дело", "дела", "дел"))
                     .append(". Вставай и делай — /today");
         }
-        return sb.isEmpty() ? null : sb.toString();
+        return sb.isEmpty() ? null : "🌅 <b>Доброе утро!</b>\n\n" + sb;
     }
 
     /**
@@ -188,16 +192,18 @@ public class NotificationService {
             return null;
         }
 
-        StringBuilder sb = new StringBuilder("Ты ещё не сделал ")
+        StringBuilder sb = new StringBuilder("⏰ <b>Время действовать!</b>\nТы ещё не сделал ")
                 .append(notDone.size()).append(" из ").append(items.size()).append(". Вставай и делай.\n\n");
         notDone.stream().limit(MAX_LISTED_TASKS)
-                .forEach(i -> sb.append("⬜ ").append(i.title()).append('\n'));
+                .forEach(i -> sb.append("⬜ ").append(Html.escape(i.title())).append('\n'));
         if (notDone.size() > MAX_LISTED_TASKS) {
             sb.append("…и ещё ").append(notDone.size() - MAX_LISTED_TASKS).append('\n');
         }
+        // Цитата — курсивом; текст и автор экранируем, так как они взяты из файла и попадают в HTML-сообщение.
         Optional<Quote> quote = quotes.pickQuote();
-        quote.ifPresent(q -> sb.append("\n«").append(q.getText()).append("» — ").append(q.getAuthor()).append('\n'));
-        sb.append("\nОтметить выполненное: /today");
+        quote.ifPresent(q -> sb.append("\n💬 <i>«").append(Html.escape(q.getText())).append("»</i> — ")
+                .append(Html.escape(q.getAuthor())).append('\n'));
+        sb.append("\n💡 Отметить выполненное: /today");
         return sb.toString();
     }
 }

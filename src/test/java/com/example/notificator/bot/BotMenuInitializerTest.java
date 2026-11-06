@@ -50,7 +50,7 @@ class BotMenuInitializerTest {
         CommandHandler handler = new CommandHandler(mock(TrackerService.class), reminderSettings, stats);
         for (BotCommand command : BotMenuInitializer.COMMANDS) {
             String text = handler.handle(1L, "/" + command.getCommand()).text();
-            assertTrue(!text.startsWith("Не понял"), "Команда /" + command.getCommand() + " не обрабатывается");
+            assertTrue(!text.startsWith("🤔 Не понял"), "Команда /" + command.getCommand() + " не обрабатывается");
         }
     }
 

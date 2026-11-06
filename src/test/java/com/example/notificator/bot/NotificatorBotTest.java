@@ -51,6 +51,7 @@ class NotificatorBotTest {
         verify(client).execute(captor.capture());
         SendMessage sent = captor.getValue();
         assertEquals("Ответ", sent.getText());
+        assertEquals("HTML", sent.getParseMode()); // тексты содержат теги <b>, <i>, <s>: нужен parse_mode=HTML
         assertEquals("12345", sent.getChatId());
         InlineKeyboardMarkup markup = (InlineKeyboardMarkup) sent.getReplyMarkup();
         assertEquals("done:5", markup.getKeyboard().get(0).get(0).getCallbackData());
@@ -93,6 +94,7 @@ class NotificatorBotTest {
         assertEquals("7", edit.getValue().getChatId());
         assertEquals(99, edit.getValue().getMessageId());
         assertEquals("Новый текст", edit.getValue().getText());
+        assertEquals("HTML", edit.getValue().getParseMode());
         assertTrue(edit.getValue().getReplyMarkup().getKeyboard().isEmpty());
     }
 

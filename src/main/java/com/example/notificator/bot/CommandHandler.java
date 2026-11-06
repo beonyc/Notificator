@@ -13,6 +13,8 @@ import com.example.notificator.stats.DayStat;
 import com.example.notificator.stats.ReportFormatter;
 import com.example.notificator.stats.StatsService;
 import com.example.notificator.stats.WeekOverview;
+import com.example.notificator.util.Html;
+import com.example.notificator.util.Visuals;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -83,13 +85,14 @@ public class CommandHandler {
 
     private static final CallbackResponse UNKNOWN_ACTION = new CallbackResponse("Неизвестное действие", null);
 
+    /** Список команд для приветствия и подсказки. Текст с HTML-разметкой (&lt;b&gt;): бот шлёт всё с parse_mode=HTML. */
     static final String HELP = """
-            Команды:
-            /add Читать 30 минут — добавить дело
-            /today — дела на сегодня (с кнопками «выполнено»)
-            /remove — убрать дело из списка
-            /week — статистика за неделю, оценка продуктивности и дела по дням
-            /reminders — время напоминаний, выключить или включить""";
+            <b>Что я умею:</b>
+            ➕ /add Читать 30 минут — добавить дело
+            📋 /today — дела на сегодня
+            🗑 /remove — убрать дело из списка
+            📊 /week — итоги недели и дела по дням
+            ⏰ /reminders — время напоминаний""";
 
     private final TrackerService service;
     private final ReminderSettingsService reminderSettings;
@@ -134,17 +137,17 @@ public class CommandHandler {
                 }
             }
             return switch (command) {
-                case "/cancel" -> BotReply.text(awaitingTimes.remove(chatId) ? "Отменено." : "Отменять нечего.");
+                case "/cancel" -> BotReply.text(awaitingTimes.remove(chatId) ? "↩️ Отменено." : "🤷 Отменять нечего.");
                 case "/start" -> BotReply.text(start(chatId));
                 case "/add" -> BotReply.text(add(chatId, args));
                 case "/today" -> today(chatId);
                 case "/remove" -> remove(chatId);
                 case "/reminders" -> reminders(chatId, args);
                 case "/week" -> weekReport(chatId);
-                default -> BotReply.text("Не понял. " + HELP);
+                default -> BotReply.text("🤔 Не понял.\n\n" + HELP);
             };
         } catch (UserNotRegisteredException e) {
-            return BotReply.text("Сначала нажми /start.");
+            return BotReply.text("👋 Сначала нажми /start.");
         }
     }
 
@@ -249,7 +252,7 @@ public class CommandHandler {
             return new CallbackResponse("Дел для удаления нет", remove(chatId));
         }
         BotReply confirm = new BotReply(
-                "Удалить все дела (" + count + ")? Это нельзя отменить.",
+                "⚠️ <b>Удалить все дела (" + count + ")?</b>\nЭто нельзя отменить.",
                 List.of(new ReplyButton("🗑 Да, удалить все", REMOVE_ALL_YES),
                         new ReplyButton("↩️ Отмена", REMOVE_ALL_NO)));
         return new CallbackResponse(null, confirm);
@@ -270,36 +273,38 @@ public class CommandHandler {
 
     private String start(long chatId) {
         if (service.register(chatId)) {
-            return "Привет! Я помогу не забивать на цели: ты ставишь дела на день, "
+            return "👋 <b>Привет!</b> Я помогу не забивать на цели: ты ставишь дела на день, "
                     + "я напоминаю и считаю статистику.\n\n" + HELP;
         }
-        return "Ты уже зарегистрирован.\n\n" + HELP;
+        return "✅ Ты уже зарегистрирован.\n\n" + HELP;
     }
 
     private String add(long chatId, String title) {
         if (title.isEmpty()) {
-            return "Напиши название дела: /add Читать 30 минут";
+            return "✍️ Напиши название дела: /add Читать 30 минут";
         }
         if (title.length() > MAX_TITLE_LENGTH) {
-            return "Слишком длинное название (максимум " + MAX_TITLE_LENGTH + " символов).";
+            return "⚠️ Слишком длинное название (максимум " + MAX_TITLE_LENGTH + " символов).";
         }
         service.addTask(chatId, title);
-        return "Добавлено: " + title;
+        return "✅ Добавлено: <b>" + Html.escape(title) + "</b>";
     }
 
     /** Список дел на сегодня; под ним — кнопка «✅» для каждого невыполненного дела. */
     private BotReply today(long chatId) {
         List<TodayItem> items = service.todayItems(chatId);
         if (items.isEmpty()) {
-            return BotReply.text("На сегодня дел нет. Добавь: /add Читать 30 минут");
+            return BotReply.text("📭 На сегодня дел нет.\nДобавь: /add Читать 30 минут");
         }
-        StringBuilder sb = new StringBuilder("Дела на сегодня:\n");
+        StringBuilder sb = new StringBuilder("📋 <b>Дела на сегодня</b>\n\n");
         List<ReplyButton> buttons = new ArrayList<>();
         int doneCount = 0;
         for (int i = 0; i < items.size(); i++) {
             TodayItem item = items.get(i);
-            sb.append(item.done() ? "✅ " : "⬜ ")
-                    .append(i + 1).append(". ").append(item.title()).append('\n');
+            String title = Html.escape(item.title());
+            // Выполненное дело зачёркиваем: список сразу видно «на глаз».
+            sb.append(item.done() ? "✅ " : "⬜ ").append(i + 1).append(". ")
+                    .append(item.done() ? "<s>" + title + "</s>" : title).append('\n');
             if (item.done()) {
                 doneCount++;
             } else {
@@ -311,9 +316,11 @@ public class CommandHandler {
         if (buttons.size() >= 2) {
             buttons.add(new ReplyButton("✅ Выполнить все", DONE_ALL));
         }
-        sb.append("\nВыполнено ").append(doneCount).append(" из ").append(items.size());
+        int percent = Visuals.percent(doneCount, items.size());
+        sb.append('\n').append(Visuals.bar(percent)).append(' ').append(percent).append("%\n")
+                .append("Выполнено <b>").append(doneCount).append("</b> из <b>").append(items.size()).append("</b>");
         if (buttons.isEmpty()) {
-            sb.append("\nВсе дела выполнены, день закрыт 💪");
+            sb.append("\n\n🎉 Все дела выполнены, день закрыт 💪");
         }
         return new BotReply(sb.toString(), buttons);
     }
@@ -330,15 +337,15 @@ public class CommandHandler {
         switch (args.toLowerCase()) {
             case "off", "выкл", "выключить" -> {
                 reminderSettings.setEnabled(chatId, false);
-                return remindersView(chatId, "Готово, напоминания выключены.\n\n");
+                return remindersView(chatId, "✅ Готово, напоминания выключены.\n\n");
             }
             case "on", "вкл", "включить" -> {
                 reminderSettings.setEnabled(chatId, true);
-                return remindersView(chatId, "Готово, напоминания включены.\n\n");
+                return remindersView(chatId, "✅ Готово, напоминания включены.\n\n");
             }
             case "default", "сброс" -> {
                 reminderSettings.resetToDefault(chatId);
-                return remindersView(chatId, "Готово, вернул стандартное время.\n\n");
+                return remindersView(chatId, "✅ Готово, вернул стандартное время.\n\n");
             }
             default -> {
                 // дальше разбираем как список времён
@@ -355,24 +362,26 @@ public class CommandHandler {
      *                 а режим ожидания остаётся включённым (можно просто прислать исправленный вариант)
      */
     private BotReply setTimesFromText(long chatId, String text, boolean awaiting) {
-        String hint = awaiting ? "\nПопробуй ещё раз или /cancel, чтобы отменить." : "";
+        String hint = awaiting ? "\n↩️ Попробуй ещё раз или /cancel, чтобы отменить." : "";
         List<LocalTime> times = new ArrayList<>();
         for (String token : text.split("[\\s,;]+")) {
             Matcher m = TIME.matcher(token);
             int hour = m.matches() ? Integer.parseInt(m.group(1)) : -1;
             int minute = m.matches() && m.group(2) != null ? Integer.parseInt(m.group(2)) : 0;
             if (hour < 0 || hour > 23 || minute > 59) {
-                return BotReply.text("Не понял время «" + token + "». Пример: 9:00 14:30 20:00" + hint);
+                // token — ввод пользователя, поэтому экранируем (иначе «<» сломает HTML-разметку)
+                return BotReply.text("⚠️ Не понял время «" + Html.escape(token)
+                        + "». Пример: <code>9:00 14:30 20:00</code>" + hint);
             }
             times.add(LocalTime.of(hour, minute));
         }
         if (times.stream().distinct().count() > ReminderSettingsService.MAX_REMINDERS) {
-            return BotReply.text("Слишком много: максимум " + ReminderSettingsService.MAX_REMINDERS
+            return BotReply.text("⚠️ Слишком много: максимум " + ReminderSettingsService.MAX_REMINDERS
                     + " напоминаний в день." + hint);
         }
         reminderSettings.setTimes(chatId, times);
         awaitingTimes.remove(chatId);
-        return remindersView(chatId, "Готово, время напоминаний обновлено.\n\n");
+        return remindersView(chatId, "✅ Готово, время напоминаний обновлено.\n\n");
     }
 
     /** Кнопка «✏️ Изменить время»: просим прислать время обычным сообщением и запоминаем, что ждём его. */
@@ -380,9 +389,10 @@ public class CommandHandler {
         ReminderSettings s = reminderSettings.get(chatId); // заодно проверяет, что пользователь зарегистрирован
         awaitingTimes.add(chatId);
         BotReply prompt = new BotReply(
-                "Отправь время напоминаний одним сообщением, например:\n9:00 14:30 20:00\n\n"
+                "⏰ <b>Отправь время напоминаний</b> одним сообщением, например:\n"
+                        + "<code>9:00 14:30 20:00</code>\n\n"
                         + "Сколько времён — столько напоминаний в день (до " + ReminderSettingsService.MAX_REMINDERS
-                        + "). Формат 24 часа, время по твоему часовому поясу (" + s.timezone() + ").",
+                        + "). Формат 24 часа, время по твоему часовому поясу (" + Html.escape(s.timezone()) + ").",
                 List.of(new ReplyButton("↩️ Отмена", REMINDERS_CANCEL)));
         return new CallbackResponse("Жду время", prompt);
     }
@@ -394,12 +404,13 @@ public class CommandHandler {
 
         StringBuilder sb = new StringBuilder(prefix);
         if (s.enabled()) {
-            sb.append("🔔 Напоминания: ").append(times).append(s.custom() ? "" : " (по умолчанию)");
+            sb.append("🔔 <b>Напоминания:</b> ").append(times).append(s.custom() ? "" : " (по умолчанию)");
         } else {
-            sb.append("🔕 Напоминания выключены.\nСохранённое время: ").append(times);
+            sb.append("🔕 <b>Напоминания выключены.</b>\nСохранённое время: ").append(times);
         }
-        sb.append("\nВремя по твоему часовому поясу: ").append(s.timezone()).append('.');
-        sb.append("\n\nЧтобы изменить время, нажми «✏️ Изменить время» и отправь, например: 9:00 14:30 20:00")
+        sb.append("\n🌍 Часовой пояс: ").append(Html.escape(s.timezone())).append('.');
+        sb.append("\n\n💡 Чтобы изменить время, нажми «✏️ Изменить время» и отправь, например: ")
+                .append("<code>9:00 14:30 20:00</code>")
                 .append("\n(до ").append(ReminderSettingsService.MAX_REMINDERS)
                 .append(" штук; сколько времён — столько напоминаний в день)");
 
@@ -497,7 +508,7 @@ public class CommandHandler {
             buttons.add(new ReplyButton(title, DAY_PREFIX + d.date()));
         }
         buttons.add(new ReplyButton("↩️ К отчёту", WEEK));
-        return new BotReply("📅 Выбери день этой недели (" + SHORT_DATE.format(week.monday()) + "–"
+        return new BotReply("📅 <b>Выбери день этой недели</b> (" + SHORT_DATE.format(week.monday()) + "–"
                 + SHORT_DATE.format(week.sunday()) + "):", buttons);
     }
 
@@ -507,33 +518,35 @@ public class CommandHandler {
      */
     private BotReply dayView(DayReport report) {
         String name = capitalize(report.date().getDayOfWeek().getDisplayName(TextStyle.FULL, RU));
-        StringBuilder sb = new StringBuilder("📅 ").append(name).append(", ")
-                .append(SHORT_DATE.format(report.date()))
+        StringBuilder sb = new StringBuilder("📅 <b>").append(name).append(", ")
+                .append(SHORT_DATE.format(report.date())).append("</b>")
                 .append(report.today() ? " (сегодня)" : report.editable() ? " (вчера)" : "").append('\n');
 
         List<TodayItem> items = report.items();
         if (items.isEmpty()) {
-            sb.append("\nВ этот день дел не было.");
+            sb.append("\n📭 В этот день дел не было.");
         } else {
             int done = 0;
             sb.append('\n');
             for (TodayItem item : items) {
-                sb.append(item.done() ? "✅ " : report.today() ? "⬜ " : "❌ ").append(item.title()).append('\n');
+                sb.append(item.done() ? "✅ " : report.today() ? "⬜ " : "❌ ")
+                        .append(Html.escape(item.title())).append('\n');
                 if (item.done()) {
                     done++;
                 }
             }
-            sb.append("\nВыполнено ").append(done).append(" из ").append(items.size())
-                    .append(" (").append(new DayStat(report.date(), items.size(), done).percent()).append("%)");
+            int percent = Visuals.percent(done, items.size());
+            sb.append('\n').append(Visuals.bar(percent)).append(' ').append(percent).append("%\n")
+                    .append("Выполнено <b>").append(done).append("</b> из <b>").append(items.size()).append("</b>");
         }
         if (report.today()) {
-            sb.append("\nОтмечать дела: /today");
+            sb.append("\n\n💡 Отмечать дела: /today");
         }
 
         List<ReplyButton> buttons = new ArrayList<>();
         if (report.editable() && !items.isEmpty()) {
             // Вчерашний день ещё можно исправить: кнопка на каждое дело меняет его статус на противоположный.
-            sb.append("\n\nНе успел вчера? Нажми на дело ниже, чтобы изменить его статус.");
+            sb.append("\n\n💡 Не успел вчера? Нажми на дело ниже, чтобы изменить его статус.");
             for (TodayItem item : items) {
                 buttons.add(new ReplyButton(
                         (item.done() ? "↩️ Снять: " : "✅ Отметить: ") + shorten(item.title()),
@@ -552,13 +565,13 @@ public class CommandHandler {
     private BotReply remove(long chatId) {
         List<TaskItem> items = service.activeTasks(chatId);
         if (items.isEmpty()) {
-            return BotReply.text("Дел для удаления нет. Добавь: /add Читать 30 минут");
+            return BotReply.text("📭 Дел для удаления нет.\nДобавь: /add Читать 30 минут");
         }
-        StringBuilder sb = new StringBuilder("Какое дело убрать из списка?\n");
+        StringBuilder sb = new StringBuilder("🗑 <b>Какое дело убрать из списка?</b>\n\n");
         List<ReplyButton> buttons = new ArrayList<>();
         for (int i = 0; i < items.size(); i++) {
             TaskItem item = items.get(i);
-            sb.append(i + 1).append(". ").append(item.title()).append('\n');
+            sb.append(i + 1).append(". ").append(Html.escape(item.title())).append('\n');
             buttons.add(new ReplyButton(
                     "🗑 " + (i + 1) + ". " + shorten(item.title()),
                     REMOVE_PREFIX + item.taskId()));

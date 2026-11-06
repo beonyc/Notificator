@@ -54,14 +54,14 @@ class CommandHandlerTest {
     void startRegistersNewUser() {
         when(service.register(CHAT)).thenReturn(true);
 
-        assertTrue(handler.handle(CHAT, "/start").text().startsWith("Привет!"));
+        assertTrue(handler.handle(CHAT, "/start").text().contains("Привет!"));
     }
 
     @Test
     void startForExistingUserSaysAlreadyRegistered() {
         when(service.register(CHAT)).thenReturn(false);
 
-        assertTrue(handler.handle(CHAT, "/start").text().startsWith("Ты уже зарегистрирован"));
+        assertTrue(handler.handle(CHAT, "/start").text().contains("Ты уже зарегистрирован"));
     }
 
     @Test
@@ -69,7 +69,7 @@ class CommandHandlerTest {
         BotReply answer = handler.handle(CHAT, "/add  Читать 30 минут ");
 
         verify(service).addTask(CHAT, "Читать 30 минут");
-        assertEquals("Добавлено: Читать 30 минут", answer.text());
+        assertEquals("✅ Добавлено: <b>Читать 30 минут</b>", answer.text());
     }
 
     @Test
@@ -77,7 +77,7 @@ class CommandHandlerTest {
         BotReply answer = handler.handle(CHAT, "/add");
 
         verify(service, never()).addTask(anyLong(), anyString());
-        assertTrue(answer.text().startsWith("Напиши название дела"));
+        assertTrue(answer.text().contains("Напиши название дела"));
     }
 
     @Test
@@ -85,14 +85,14 @@ class CommandHandlerTest {
         BotReply answer = handler.handle(CHAT, "/add " + "я".repeat(CommandHandler.MAX_TITLE_LENGTH + 1));
 
         verify(service, never()).addTask(anyLong(), anyString());
-        assertTrue(answer.text().startsWith("Слишком длинное название"));
+        assertTrue(answer.text().contains("Слишком длинное название"));
     }
 
     @Test
     void commandWithBotNameSuffixAndUpperCaseIsRecognized() {
         when(service.todayItems(CHAT)).thenReturn(List.of());
 
-        assertTrue(handler.handle(CHAT, "/TODAY@NotificatorBot").text().startsWith("На сегодня дел нет"));
+        assertTrue(handler.handle(CHAT, "/TODAY@NotificatorBot").text().contains("На сегодня дел нет"));
     }
 
     @Test
@@ -103,11 +103,13 @@ class CommandHandlerTest {
         BotReply reply = handler.handle(CHAT, "/today");
 
         assertEquals("""
-                Дела на сегодня:
-                ✅ 1. Читать
+                📋 <b>Дела на сегодня</b>
+
+                ✅ 1. <s>Читать</s>
                 ⬜ 2. Зарядка
 
-                Выполнено 1 из 2""", reply.text());
+                ▰▰▰▰▰▱▱▱▱▱ 50%
+                Выполнено <b>1</b> из <b>2</b>""", reply.text());
         assertEquals(List.of(new ReplyButton("✅ 2. Зарядка", "done:11")), reply.buttons());
     }
 
@@ -118,7 +120,25 @@ class CommandHandlerTest {
         BotReply reply = handler.handle(CHAT, "/today");
 
         assertTrue(reply.buttons().isEmpty());
-        assertTrue(reply.text().endsWith("Все дела выполнены, день закрыт 💪"));
+        assertTrue(reply.text().endsWith("🎉 Все дела выполнены, день закрыт 💪"));
+        assertTrue(reply.text().contains("▰▰▰▰▰▰▰▰▰▰ 100%"), reply.text());
+    }
+
+    @Test
+    void userTextInTitlesIsHtmlEscapedSoTelegramCanParseMessage() {
+        when(service.todayItems(CHAT)).thenReturn(List.of(new TodayItem(1, "Сдать <отчёт> & Ко", false)));
+        when(service.activeTasks(CHAT)).thenReturn(List.of(new TaskItem(7, "Сдать <отчёт> & Ко")));
+
+        assertTrue(handler.handle(CHAT, "/today").text().contains("⬜ 1. Сдать &lt;отчёт&gt; &amp; Ко"));
+        assertTrue(handler.handle(CHAT, "/remove").text().contains("1. Сдать &lt;отчёт&gt; &amp; Ко"));
+        assertEquals("✅ Добавлено: <b>&lt;b&gt;хак&lt;/b&gt;</b>", handler.handle(CHAT, "/add <b>хак</b>").text());
+    }
+
+    @Test
+    void doneTasksAreStruckThroughInTodayList() {
+        when(service.todayItems(CHAT)).thenReturn(List.of(new TodayItem(1, "Читать", true)));
+
+        assertTrue(handler.handle(CHAT, "/today").text().contains("✅ 1. <s>Читать</s>"));
     }
 
     @Test
@@ -134,7 +154,7 @@ class CommandHandlerTest {
     void unregisteredUserIsAskedToPressStart() {
         when(service.todayItems(CHAT)).thenThrow(new UserNotRegisteredException(CHAT));
 
-        assertEquals("Сначала нажми /start.", handler.handle(CHAT, "/today").text());
+        assertEquals("👋 Сначала нажми /start.", handler.handle(CHAT, "/today").text());
     }
 
     @Test
@@ -151,7 +171,7 @@ class CommandHandlerTest {
 
         verify(service).markDone(CHAT, 11L);
         assertEquals("Выполнено ✅", response.notice());
-        assertTrue(response.view().text().contains("✅ 1. Зарядка"));
+        assertTrue(response.view().text().contains("✅ 1. <s>Зарядка</s>"));
         assertTrue(response.view().buttons().isEmpty());
     }
 
@@ -185,7 +205,8 @@ class CommandHandlerTest {
         BotReply reply = handler.handle(CHAT, "/remove");
 
         assertEquals("""
-                Какое дело убрать из списка?
+                🗑 <b>Какое дело убрать из списка?</b>
+
                 1. Читать
                 2. Зарядка""", reply.text());
         assertEquals(List.of(new ReplyButton("🗑 1. Читать", "rm:7"), new ReplyButton("🗑 2. Зарядка", "rm:8"),
@@ -245,7 +266,7 @@ class CommandHandlerTest {
         CallbackResponse response = handler.handleCallback(CHAT, "rmall");
 
         verify(service, never()).removeAllTasks(anyLong());
-        assertTrue(response.view().text().startsWith("Удалить все дела (2)?"));
+        assertTrue(response.view().text().contains("Удалить все дела (2)?"));
         assertEquals(List.of(new ReplyButton("🗑 Да, удалить все", "rmall:yes"),
                 new ReplyButton("↩️ Отмена", "rmall:no")), response.view().buttons());
     }
@@ -259,7 +280,7 @@ class CommandHandlerTest {
 
         verify(service).removeAllTasks(CHAT);
         assertEquals("Удалено дел: 2", response.notice());
-        assertTrue(response.view().text().startsWith("Дел для удаления нет"));
+        assertTrue(response.view().text().contains("Дел для удаления нет"));
     }
 
     @Test
@@ -270,7 +291,7 @@ class CommandHandlerTest {
 
         verify(service, never()).removeAllTasks(anyLong());
         assertEquals("Отменено", response.notice());
-        assertTrue(response.view().text().startsWith("Какое дело убрать"));
+        assertTrue(response.view().text().contains("Какое дело убрать"));
     }
 
     @Test
@@ -279,7 +300,7 @@ class CommandHandlerTest {
 
         BotReply reply = handler.handle(CHAT, "/remove");
 
-        assertTrue(reply.text().startsWith("Дел для удаления нет"));
+        assertTrue(reply.text().contains("Дел для удаления нет"));
         assertTrue(reply.buttons().isEmpty());
     }
 
@@ -318,7 +339,7 @@ class CommandHandlerTest {
 
         BotReply reply = handler.handle(CHAT, "/week");
 
-        assertTrue(reply.text().startsWith("📊 Неделя в процессе 02.11–07.11"), reply.text());
+        assertTrue(reply.text().startsWith("📊 <b>Неделя в процессе</b> 02.11–07.11"), reply.text());
         assertEquals(List.of(new ReplyButton("📅 Дела по дням", "days")), reply.buttons());
     }
 
@@ -347,7 +368,7 @@ class CommandHandlerTest {
     @Test
     void dayCommandNoLongerExistsPastDaysAreOnlyAvailableFromWeek() {
         for (String text : new String[] {"/day", "/day пн", "/day 5.11"}) {
-            assertTrue(handler.handle(CHAT, text).text().startsWith("Не понял. Команды"), text);
+            assertTrue(handler.handle(CHAT, text).text().startsWith("🤔 Не понял."), text);
         }
         assertFalse(CommandHandler.HELP.contains("/day"));
         verify(stats, never()).dayReport(anyLong(), any());
@@ -361,7 +382,7 @@ class CommandHandlerTest {
         CallbackResponse response = handler.handleCallback(CHAT, "days");
 
         assertNull(response.notice());
-        assertEquals("📅 Выбери день этой недели (02.11–08.11):", response.view().text());
+        assertEquals("📅 <b>Выбери день этой недели</b> (02.11–08.11):", response.view().text());
         assertEquals(List.of(
                 new ReplyButton("Пн 02.11 · 2 из 3", "day:2026-11-02"),
                 new ReplyButton("Вт 03.11 · дел нет", "day:2026-11-03"),
@@ -378,7 +399,7 @@ class CommandHandlerTest {
         CallbackResponse response = handler.handleCallback(CHAT, "week");
 
         assertNull(response.notice());
-        assertTrue(response.view().text().startsWith("📊 Неделя в процессе 02.11–05.11"), response.view().text());
+        assertTrue(response.view().text().startsWith("📊 <b>Неделя в процессе</b> 02.11–05.11"), response.view().text());
         assertEquals(List.of(new ReplyButton("📅 Дела по дням", "days")), response.view().buttons());
     }
 
@@ -399,13 +420,14 @@ class CommandHandlerTest {
 
         assertNull(response.notice());
         assertEquals("""
-                📅 Понедельник, 02.11
+                📅 <b>Понедельник, 02.11</b>
 
                 ✅ Читать
                 ❌ Зарядка
                 ✅ Сон
 
-                Выполнено 2 из 3 (67%)""", response.view().text());
+                ▰▰▰▰▰▰▰▱▱▱ 67%
+                Выполнено <b>2</b> из <b>3</b>""", response.view().text());
         assertEquals(List.of(new ReplyButton("↩️ К дням недели", "days")), response.view().buttons());
     }
 
@@ -415,10 +437,11 @@ class CommandHandlerTest {
 
         String text = handler.handleCallback(CHAT, "day:2026-11-05").view().text();
 
-        assertTrue(text.startsWith("📅 Четверг, 05.11 (сегодня)"), text);
+        assertTrue(text.startsWith("📅 <b>Четверг, 05.11</b> (сегодня)"), text);
         assertTrue(text.contains("⬜ Читать"), text);
         assertFalse(text.contains("❌"), text);
-        assertTrue(text.endsWith("Отмечать дела: /today"), text);
+        assertTrue(text.contains("▰▰▰▰▰▱▱▱▱▱ 50%"), text);
+        assertTrue(text.endsWith("💡 Отмечать дела: /today"), text);
     }
 
     @Test
@@ -427,7 +450,7 @@ class CommandHandlerTest {
 
         String text = handler.handleCallback(CHAT, "day:2026-11-03").view().text();
 
-        assertEquals("📅 Вторник, 03.11\n\nВ этот день дел не было.", text);
+        assertEquals("📅 <b>Вторник, 03.11</b>\n\n📭 В этот день дел не было.", text);
     }
 
     // ---------- Исправление статусов за вчера ----------
@@ -441,14 +464,15 @@ class CommandHandlerTest {
         BotReply view = handler.handleCallback(CHAT, "day:2026-11-04").view();
 
         assertEquals("""
-                📅 Среда, 04.11 (вчера)
+                📅 <b>Среда, 04.11</b> (вчера)
 
                 ✅ Читать
                 ❌ Зарядка
 
-                Выполнено 1 из 2 (50%)
+                ▰▰▰▰▰▱▱▱▱▱ 50%
+                Выполнено <b>1</b> из <b>2</b>
 
-                Не успел вчера? Нажми на дело ниже, чтобы изменить его статус.""", view.text());
+                💡 Не успел вчера? Нажми на дело ниже, чтобы изменить его статус.""", view.text());
         assertEquals(List.of(
                 new ReplyButton("↩️ Снять: Читать", "yd:2026-11-04:1:0"),
                 new ReplyButton("✅ Отметить: Зарядка", "yd:2026-11-04:2:1"),
@@ -494,7 +518,7 @@ class CommandHandlerTest {
 
         verify(service).setYesterdayDone(CHAT, 2L, true);
         assertEquals("Отмечено ✅", response.notice());
-        assertTrue(response.view().text().contains("Выполнено 2 из 2 (100%)"), response.view().text());
+        assertTrue(response.view().text().contains("Выполнено <b>2</b> из <b>2</b>"), response.view().text());
     }
 
     @Test
@@ -563,7 +587,7 @@ class CommandHandlerTest {
 
         assertEquals("Можно смотреть только текущую неделю (02.11–08.11).", outside.notice());
         assertEquals("Этот день ещё не наступил.", future.notice());
-        assertTrue(outside.view().text().startsWith("📅 Выбери день"), outside.view().text());
+        assertTrue(outside.view().text().startsWith("📅 <b>Выбери день"), outside.view().text());
     }
 
     @Test
@@ -589,7 +613,7 @@ class CommandHandlerTest {
     void weekFromUnregisteredUserAsksToPressStart() {
         when(stats.currentWeek(CHAT)).thenThrow(new UserNotRegisteredException(CHAT));
 
-        assertEquals("Сначала нажми /start.", handler.handle(CHAT, "/week").text());
+        assertEquals("👋 Сначала нажми /start.", handler.handle(CHAT, "/week").text());
     }
 
     // ---------- /reminders ----------
@@ -604,7 +628,7 @@ class CommandHandlerTest {
 
         BotReply reply = handler.handle(CHAT, "/reminders");
 
-        assertTrue(reply.text().startsWith("🔔 Напоминания: 13:00, 17:00 (по умолчанию)"), reply.text());
+        assertTrue(reply.text().startsWith("🔔 <b>Напоминания:</b> 13:00, 17:00 (по умолчанию)"), reply.text());
         assertTrue(reply.text().contains("Europe/Moscow"));
         assertEquals(List.of(new ReplyButton("✏️ Изменить время", "rem:edit"),
                 new ReplyButton("🔕 Выключить", "rem:off")), reply.buttons());
@@ -616,7 +640,7 @@ class CommandHandlerTest {
 
         BotReply reply = handler.handle(CHAT, "/reminders");
 
-        assertTrue(reply.text().startsWith("🔔 Напоминания: 09:30\n"), reply.text());
+        assertTrue(reply.text().startsWith("🔔 <b>Напоминания:</b> 09:30\n"), reply.text());
         assertEquals(List.of(new ReplyButton("✏️ Изменить время", "rem:edit"),
                 new ReplyButton("🔕 Выключить", "rem:off"),
                 new ReplyButton("↩️ По умолчанию", "rem:default")), reply.buttons());
@@ -628,7 +652,7 @@ class CommandHandlerTest {
 
         BotReply reply = handler.handle(CHAT, "/reminders");
 
-        assertTrue(reply.text().startsWith("🔕 Напоминания выключены."), reply.text());
+        assertTrue(reply.text().startsWith("🔕 <b>Напоминания выключены.</b>"), reply.text());
         assertTrue(reply.text().contains("Сохранённое время: 13:00"));
         assertEquals(List.of(new ReplyButton("✏️ Изменить время", "rem:edit"),
                 new ReplyButton("🔔 Включить", "rem:on")), reply.buttons());
@@ -641,14 +665,14 @@ class CommandHandlerTest {
         CallbackResponse ask = handler.handleCallback(CHAT, "rem:edit");
 
         assertEquals("Жду время", ask.notice());
-        assertTrue(ask.view().text().startsWith("Отправь время напоминаний одним сообщением"), ask.view().text());
+        assertTrue(ask.view().text().contains("Отправь время напоминаний</b> одним сообщением"), ask.view().text());
         assertTrue(ask.view().text().contains("Europe/Moscow"));
         assertEquals(List.of(new ReplyButton("↩️ Отмена", "rem:cancel")), ask.view().buttons());
 
         BotReply reply = handler.handle(CHAT, "9:00 18:00"); // обычное сообщение без команды
 
         verify(reminders).setTimes(CHAT, List.of(LocalTime.of(9, 0), LocalTime.of(18, 0)));
-        assertTrue(reply.text().startsWith("Готово, время напоминаний обновлено."), reply.text());
+        assertTrue(reply.text().startsWith("✅ Готово, время напоминаний обновлено."), reply.text());
     }
 
     @Test
@@ -659,7 +683,7 @@ class CommandHandlerTest {
 
         BotReply reply = handler.handle(CHAT, "привет");
 
-        assertTrue(reply.text().startsWith("Не понял. Команды"), reply.text());
+        assertTrue(reply.text().startsWith("🤔 Не понял."), reply.text());
         verify(reminders, org.mockito.Mockito.times(1)).setTimes(anyLong(), any());
     }
 
@@ -670,7 +694,7 @@ class CommandHandlerTest {
 
         BotReply bad = handler.handle(CHAT, "утром и вечером");
 
-        assertTrue(bad.text().startsWith("Не понял время «утром»"), bad.text());
+        assertTrue(bad.text().contains("Не понял время «утром»"), bad.text());
         assertTrue(bad.text().contains("/cancel"));
         verify(reminders, never()).setTimes(anyLong(), any());
 
@@ -683,16 +707,16 @@ class CommandHandlerTest {
         when(reminders.get(CHAT)).thenReturn(settings(true, true, LocalTime.of(9, 0)));
 
         handler.handleCallback(CHAT, "rem:edit");
-        assertEquals("Отменено.", handler.handle(CHAT, "/cancel").text());
-        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("Не понял. Команды"));
+        assertEquals("↩️ Отменено.", handler.handle(CHAT, "/cancel").text());
+        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("🤔 Не понял."));
 
         handler.handleCallback(CHAT, "rem:edit");
         CallbackResponse cancelled = handler.handleCallback(CHAT, "rem:cancel");
         assertEquals("Отменено", cancelled.notice());
         assertTrue(cancelled.view().text().contains("Напоминания"));
-        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("Не понял. Команды"));
+        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("🤔 Не понял."));
 
-        assertEquals("Отменять нечего.", handler.handle(CHAT, "/cancel").text());
+        assertEquals("🤷 Отменять нечего.", handler.handle(CHAT, "/cancel").text());
         verify(reminders, never()).setTimes(anyLong(), any());
     }
 
@@ -704,15 +728,15 @@ class CommandHandlerTest {
 
         BotReply today = handler.handle(CHAT, "/today");
 
-        assertTrue(today.text().startsWith("На сегодня дел нет"), today.text());
-        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("Не понял. Команды")); // ожидание сброшено
+        assertTrue(today.text().contains("На сегодня дел нет"), today.text());
+        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("🤔 Не понял.")); // ожидание сброшено
     }
 
     @Test
     void plainTextWithoutPressingEditButtonIsNotTreatedAsTimes() {
         BotReply reply = handler.handle(CHAT, "9:00 18:00");
 
-        assertTrue(reply.text().startsWith("Не понял. Команды"), reply.text());
+        assertTrue(reply.text().startsWith("🤔 Не понял."), reply.text());
         verify(reminders, never()).setTimes(anyLong(), any());
     }
 
@@ -721,7 +745,7 @@ class CommandHandlerTest {
         when(reminders.get(CHAT)).thenThrow(new UserNotRegisteredException(CHAT));
 
         assertEquals("Сначала нажми /start", handler.handleCallback(CHAT, "rem:edit").notice());
-        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("Не понял. Команды")); // ожидание не включилось
+        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("🤔 Не понял.")); // ожидание не включилось
     }
 
     @Test
@@ -732,7 +756,7 @@ class CommandHandlerTest {
 
         verify(reminders).setTimes(CHAT, List.of(LocalTime.of(9, 0), LocalTime.of(14, 30),
                 LocalTime.of(20, 15), LocalTime.of(7, 5)));
-        assertTrue(reply.text().startsWith("Готово, время напоминаний обновлено."), reply.text());
+        assertTrue(reply.text().startsWith("✅ Готово, время напоминаний обновлено."), reply.text());
     }
 
     @Test
@@ -740,7 +764,7 @@ class CommandHandlerTest {
         for (String bad : new String[] {"25:00", "9:60", "abc", "9:0", "-1"}) {
             BotReply reply = handler.handle(CHAT, "/reminders 9:00 " + bad);
 
-            assertTrue(reply.text().startsWith("Не понял время «" + bad + "»"), reply.text());
+            assertTrue(reply.text().contains("Не понял время «" + bad + "»"), reply.text());
         }
         verify(reminders, never()).setTimes(anyLong(), any());
     }
@@ -749,7 +773,7 @@ class CommandHandlerTest {
     void remindersRejectsTooManyTimes() {
         BotReply reply = handler.handle(CHAT, "/reminders 8 9 10 11 12 13 14");
 
-        assertTrue(reply.text().startsWith("Слишком много: максимум 6"), reply.text());
+        assertTrue(reply.text().contains("Слишком много: максимум 6"), reply.text());
         verify(reminders, never()).setTimes(anyLong(), any());
     }
 
@@ -767,10 +791,10 @@ class CommandHandlerTest {
     void remindersOffOnDefaultCommands() {
         when(reminders.get(CHAT)).thenReturn(settings(false, false, LocalTime.of(13, 0)));
 
-        assertTrue(handler.handle(CHAT, "/reminders off").text().startsWith("Готово, напоминания выключены."));
-        assertTrue(handler.handle(CHAT, "/reminders ВЫКЛ").text().startsWith("Готово, напоминания выключены."));
-        assertTrue(handler.handle(CHAT, "/reminders on").text().startsWith("Готово, напоминания включены."));
-        assertTrue(handler.handle(CHAT, "/reminders default").text().startsWith("Готово, вернул стандартное"));
+        assertTrue(handler.handle(CHAT, "/reminders off").text().startsWith("✅ Готово, напоминания выключены."));
+        assertTrue(handler.handle(CHAT, "/reminders ВЫКЛ").text().startsWith("✅ Готово, напоминания выключены."));
+        assertTrue(handler.handle(CHAT, "/reminders on").text().startsWith("✅ Готово, напоминания включены."));
+        assertTrue(handler.handle(CHAT, "/reminders default").text().startsWith("✅ Готово, вернул стандартное"));
 
         verify(reminders, org.mockito.Mockito.times(2)).setEnabled(CHAT, false);
         verify(reminders).setEnabled(CHAT, true);
@@ -798,7 +822,7 @@ class CommandHandlerTest {
     void remindersFromUnregisteredUserAsksToPressStart() {
         when(reminders.get(CHAT)).thenThrow(new UserNotRegisteredException(CHAT));
 
-        assertEquals("Сначала нажми /start.", handler.handle(CHAT, "/reminders").text());
+        assertEquals("👋 Сначала нажми /start.", handler.handle(CHAT, "/reminders").text());
         assertEquals("Сначала нажми /start", handler.handleCallback(CHAT, "rem:off").notice());
     }
 
