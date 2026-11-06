@@ -13,6 +13,7 @@ import com.example.notificator.service.QuoteService;
 import com.example.notificator.service.ReminderSettingsService;
 import com.example.notificator.service.TodayItem;
 import com.example.notificator.service.TrackerService;
+import com.example.notificator.stats.StatsService;
 import com.example.notificator.support.MutableClock;
 import com.example.notificator.support.NotificationTestConfig;
 import java.time.LocalDateTime;
@@ -30,7 +31,7 @@ import org.springframework.context.annotation.Import;
  */
 @DataJpaTest
 @Import({NotificationTestConfig.class, TrackerService.class, QuoteService.class,
-        ReminderSettingsService.class, NotificationService.class})
+        ReminderSettingsService.class, StatsService.class, NotificationService.class})
 class NotificationServiceTest {
 
     private static final long CHAT = 100L;
@@ -373,14 +374,83 @@ class NotificationServiceTest {
         assertEquals(List.of(userId), service.userIds());
     }
 
+    // ---------- Недельный отчёт ----------
+    // Понедельник 9 ноября 2026, 00:05 МСК = 8 ноября 21:05 UTC. Прошедшая неделя: 2–8 ноября.
+
+    private static final String MON_0005 = "2026-11-08T21:05:00Z";
+    private static final String MON_0004 = "2026-11-08T21:04:00Z";
+    private static final String MON_0036 = "2026-11-08T21:36:00Z";
+    private static final String TUE_0005 = "2026-11-09T21:05:00Z";
+
+    /** В указанный день недели прошлой недели (UTC-полдень) добавлено дело, и выполнено ли оно. */
+    private void entryOnDay(String taskTitle, String noonUtc, boolean done) {
+        clock.set(noonUtc);
+        tracker.addTask(CHAT, taskTitle);
+        if (done) {
+            tracker.markAllDone(CHAT);
+        }
+    }
+
     @Test
-    void pluralPicksCorrectRussianForm() {
-        assertEquals("дело", NotificationService.plural(1, "дело", "дела", "дел"));
-        assertEquals("дела", NotificationService.plural(3, "дело", "дела", "дел"));
-        assertEquals("дел", NotificationService.plural(5, "дело", "дела", "дел"));
-        assertEquals("дел", NotificationService.plural(11, "дело", "дела", "дел"));
-        assertEquals("дело", NotificationService.plural(21, "дело", "дела", "дел"));
-        assertEquals("дел", NotificationService.plural(112, "дело", "дела", "дел"));
+    void weeklyReportOnMondayShortlyAfterMidnightSummarisesPreviousWeek() {
+        entryOnDay("Читать", "2026-11-03T09:00:00Z", true);   // вторник — выполнено
+        entryOnDay("Зарядка", "2026-11-05T09:00:00Z", false); // четверг — нет
+        clock.set(MON_0005);
+
+        PendingNotification n = service.prepare(userId).orElseThrow();
+
+        assertEquals(NotificationKind.WEEKLY_REPORT, n.kind());
+        assertEquals(LocalDateTime.of(2026, 11, 9, 0, 5), n.slot());
+        assertTrue(n.text().startsWith("📊 Итоги недели 02.11–08.11"), n.text());
+        assertTrue(n.text().contains("Выполнено 1 из 2 (50%)"), n.text());
+        assertTrue(n.text().contains("• Читать — 1 из 1"), n.text());
+    }
+
+    @Test
+    void weeklyReportIsNotDueOnOtherWeekdaysOrOutsideWindow() {
+        entryOnDay("Читать", "2026-11-03T09:00:00Z", true);
+
+        clock.set(MON_0004); // за минуту до времени отчёта
+        assertTrue(service.prepare(userId).isEmpty());
+        clock.set(MON_0036); // окно 30 минут прошло
+        assertTrue(service.prepare(userId).isEmpty());
+        clock.set(TUE_0005); // вторник
+        assertTrue(service.prepare(userId).isEmpty());
+        clock.set("2026-11-07T21:05:00Z"); // воскресенье 00:05 — не понедельник
+        assertTrue(service.prepare(userId).isEmpty());
+    }
+
+    @Test
+    void weeklyReportIsNotRepeatedOnceMarkedHandled() {
+        entryOnDay("Читать", "2026-11-03T09:00:00Z", true);
+        clock.set(MON_0005);
+        PendingNotification n = service.prepare(userId).orElseThrow();
+
+        service.markHandled(n.userId(), n.kind(), n.slot());
+
+        clock.set("2026-11-08T21:10:00Z");
+        assertTrue(service.prepare(userId).isEmpty());
+    }
+
+    @Test
+    void weeklyReportHasNoTextWhenWeekHadNoTasks() {
+        clock.set(MON_0005);
+
+        PendingNotification n = service.prepare(userId).orElseThrow();
+
+        assertEquals(NotificationKind.WEEKLY_REPORT, n.kind());
+        assertNull(n.text());
+        service.markHandled(n.userId(), n.kind(), n.slot());
+        assertTrue(service.prepare(userId).isEmpty());
+    }
+
+    @Test
+    void weeklyReportDoesNotDependOnReminderSettings() {
+        entryOnDay("Читать", "2026-11-03T09:00:00Z", true);
+        reminderSettings.setEnabled(CHAT, false);
+        clock.set(MON_0005);
+
+        assertEquals(NotificationKind.WEEKLY_REPORT, service.prepare(userId).orElseThrow().kind());
     }
 
     // ---------- Помощники ----------

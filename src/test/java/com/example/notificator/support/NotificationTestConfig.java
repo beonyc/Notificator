@@ -24,7 +24,7 @@ public class NotificationTestConfig {
 
     @Bean
     public NotificationProperties notificationProperties() {
-        return new NotificationProperties(LocalTime.of(8, 0),
+        return new NotificationProperties(LocalTime.of(8, 0), LocalTime.of(0, 5),
                 List.of(LocalTime.of(13, 0), LocalTime.of(17, 0), LocalTime.of(21, 0)), 30, 7);
     }
 

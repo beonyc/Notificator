@@ -7,9 +7,19 @@ import com.example.notificator.service.TaskItem;
 import com.example.notificator.service.TodayItem;
 import com.example.notificator.service.TrackerService;
 import com.example.notificator.service.UserNotRegisteredException;
+import com.example.notificator.stats.DayReport;
+import com.example.notificator.stats.DayStat;
+import com.example.notificator.stats.ReportFormatter;
+import com.example.notificator.stats.StatsService;
+import com.example.notificator.stats.WeekOverview;
+import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.time.format.TextStyle;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -53,6 +63,17 @@ public class CommandHandler {
     static final String REMINDERS_EDIT = "rem:edit";
     static final String REMINDERS_CANCEL = "rem:cancel";
 
+    /**
+     * Кнопки под отчётом /week: «Дела по дням» (выбор дня текущей недели), «К отчёту» (назад к отчёту)
+     * и кнопка дня с префиксом «day:2026-11-05». Просмотр прошлых дней доступен только из /week.
+     */
+    static final String DAYS = "days";
+    static final String WEEK = "week";
+    static final String DAY_PREFIX = "day:";
+
+    private static final DateTimeFormatter SHORT_DATE = DateTimeFormatter.ofPattern("dd.MM");
+    private static final Locale RU = Locale.forLanguageTag("ru");
+
     /** Время в команде /reminders: «9», «9:00», «09.30» (час 0–23, минуты 0–59 проверяются отдельно). */
     private static final Pattern TIME = Pattern.compile("^(\\d{1,2})(?:[:.](\\d{2}))?$");
 
@@ -63,10 +84,12 @@ public class CommandHandler {
             /add Читать 30 минут — добавить дело
             /today — дела на сегодня (с кнопками «выполнено»)
             /remove — убрать дело из списка
+            /week — статистика за неделю, оценка продуктивности и дела по дням
             /reminders — время напоминаний, выключить или включить""";
 
     private final TrackerService service;
     private final ReminderSettingsService reminderSettings;
+    private final StatsService statsService;
 
     /**
      * Чаты, от которых бот ждёт время напоминаний (после нажатия «Изменить время»).
@@ -75,9 +98,11 @@ public class CommandHandler {
      */
     private final Set<Long> awaitingTimes = ConcurrentHashMap.newKeySet();
 
-    public CommandHandler(TrackerService service, ReminderSettingsService reminderSettings) {
+    public CommandHandler(TrackerService service, ReminderSettingsService reminderSettings,
+                          StatsService statsService) {
         this.service = service;
         this.reminderSettings = reminderSettings;
+        this.statsService = statsService;
     }
 
     /**
@@ -111,6 +136,7 @@ public class CommandHandler {
                 case "/today" -> today(chatId);
                 case "/remove" -> remove(chatId);
                 case "/reminders" -> reminders(chatId, args);
+                case "/week" -> weekReport(chatId);
                 default -> BotReply.text("Не понял. " + HELP);
             };
         } catch (UserNotRegisteredException e) {
@@ -138,6 +164,10 @@ public class CommandHandler {
                     return removeAll(chatId);
                 case REMOVE_ALL_NO:
                     return new CallbackResponse("Отменено", remove(chatId));
+                case WEEK:
+                    return new CallbackResponse(null, weekReport(chatId));
+                case DAYS:
+                    return new CallbackResponse(null, daysPicker(chatId));
                 case REMINDERS_EDIT:
                     return askForTimes(chatId);
                 case REMINDERS_CANCEL:
@@ -157,6 +187,9 @@ public class CommandHandler {
                     return new CallbackResponse("Время сброшено", remindersView(chatId, ""));
                 default:
                     break;
+            }
+            if (data.startsWith(DAY_PREFIX)) {
+                return showDay(chatId, data.substring(DAY_PREFIX.length()));
             }
             if (data.startsWith(DONE_PREFIX)) {
                 Long entryId = parseId(data, DONE_PREFIX);
@@ -372,6 +405,91 @@ public class CommandHandler {
             buttons.add(new ReplyButton("↩️ По умолчанию", REMINDERS_DEFAULT));
         }
         return new BotReply(sb.toString(), buttons);
+    }
+
+    /**
+     * Отчёт за текущую неделю (команда /week и кнопка «К отчёту»). Под ним кнопка перехода к просмотру
+     * дел по дням: просмотр прошлых дней доступен только отсюда, отдельной команды для него нет.
+     */
+    private BotReply weekReport(long chatId) {
+        return new BotReply(ReportFormatter.format(statsService.currentWeek(chatId), false),
+                List.of(new ReplyButton("📅 Дела по дням", DAYS)));
+    }
+
+    /** Нажатие кнопки дня («day:2026-11-05»). Дата приходит от клиента, поэтому проверяется сервисом. */
+    private CallbackResponse showDay(long chatId, String isoDate) {
+        LocalDate date;
+        try {
+            date = LocalDate.parse(isoDate);
+        } catch (DateTimeParseException e) {
+            return UNKNOWN_ACTION;
+        }
+        DayReport report = statsService.dayReport(chatId, date);
+        if (report.status() == DayReport.Status.OK) {
+            return new CallbackResponse(null, dayView(report));
+        }
+        return new CallbackResponse(dayError(report.status(), statsService.weekOverview(chatId)),
+                daysPicker(chatId));
+    }
+
+    private static String dayError(DayReport.Status status, WeekOverview week) {
+        return status == DayReport.Status.FUTURE
+                ? "Этот день ещё не наступил."
+                : "Можно смотреть только текущую неделю (" + SHORT_DATE.format(week.monday()) + "–"
+                        + SHORT_DATE.format(week.sunday()) + ").";
+    }
+
+    /**
+     * Выбор дня текущей недели: кнопка на каждый день от понедельника до сегодня с итогом дня
+     * и кнопка возврата к отчёту.
+     */
+    private BotReply daysPicker(long chatId) {
+        WeekOverview week = statsService.weekOverview(chatId);
+        List<ReplyButton> buttons = new ArrayList<>();
+        for (DayStat d : week.days()) {
+            String title = capitalize(d.date().getDayOfWeek().getDisplayName(TextStyle.SHORT, RU))
+                    + " " + SHORT_DATE.format(d.date())
+                    + (d.date().equals(week.today()) ? " (сегодня)" : "")
+                    + " · " + (d.total() == 0 ? "дел нет" : d.done() + " из " + d.total());
+            buttons.add(new ReplyButton(title, DAY_PREFIX + d.date()));
+        }
+        buttons.add(new ReplyButton("↩️ К отчёту", WEEK));
+        return new BotReply("📅 Выбери день этой недели (" + SHORT_DATE.format(week.monday()) + "–"
+                + SHORT_DATE.format(week.sunday()) + "):", buttons);
+    }
+
+    /**
+     * Список дел за день: ✅ выполнено, ❌ не выполнено (для прошедших дней), ⬜ ещё не выполнено (для
+     * сегодняшнего, день не закончен). Внизу итог и кнопка возврата к выбору дня.
+     */
+    private BotReply dayView(DayReport report) {
+        String name = capitalize(report.date().getDayOfWeek().getDisplayName(TextStyle.FULL, RU));
+        StringBuilder sb = new StringBuilder("📅 ").append(name).append(", ")
+                .append(SHORT_DATE.format(report.date())).append(report.today() ? " (сегодня)" : "").append('\n');
+
+        List<TodayItem> items = report.items();
+        if (items.isEmpty()) {
+            sb.append("\nВ этот день дел не было.");
+        } else {
+            int done = 0;
+            sb.append('\n');
+            for (TodayItem item : items) {
+                sb.append(item.done() ? "✅ " : report.today() ? "⬜ " : "❌ ").append(item.title()).append('\n');
+                if (item.done()) {
+                    done++;
+                }
+            }
+            sb.append("\nВыполнено ").append(done).append(" из ").append(items.size())
+                    .append(" (").append(new DayStat(report.date(), items.size(), done).percent()).append("%)");
+        }
+        if (report.today()) {
+            sb.append("\nОтмечать дела: /today");
+        }
+        return new BotReply(sb.toString(), List.of(new ReplyButton("↩️ К дням недели", DAYS)));
+    }
+
+    private static String capitalize(String s) {
+        return s.isEmpty() ? s : s.substring(0, 1).toUpperCase(RU) + s.substring(1);
     }
 
     /** Список дел для удаления: по кнопке «🗑» на каждое активное дело. */

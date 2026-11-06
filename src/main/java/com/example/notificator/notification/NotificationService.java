@@ -10,7 +10,12 @@ import com.example.notificator.service.QuoteService;
 import com.example.notificator.service.ReminderSettingsService;
 import com.example.notificator.service.TodayItem;
 import com.example.notificator.service.TrackerService;
+import com.example.notificator.stats.ReportFormatter;
+import com.example.notificator.stats.StatsService;
+import com.example.notificator.stats.WeeklyStats;
+import com.example.notificator.util.Plurals;
 import java.time.Clock;
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -44,17 +49,19 @@ public class NotificationService {
     private final TrackerService tracker;
     private final QuoteService quotes;
     private final ReminderSettingsService reminderSettings;
+    private final StatsService statsService;
     private final NotificationProperties props;
     private final Clock clock;
 
     public NotificationService(UserRepository users, TaskEntryRepository entries, TrackerService tracker,
                                QuoteService quotes, ReminderSettingsService reminderSettings,
-                               NotificationProperties props, Clock clock) {
+                               StatsService statsService, NotificationProperties props, Clock clock) {
         this.users = users;
         this.entries = entries;
         this.tracker = tracker;
         this.quotes = quotes;
         this.reminderSettings = reminderSettings;
+        this.statsService = statsService;
         this.props = props;
         this.clock = clock;
     }
@@ -85,6 +92,14 @@ public class NotificationService {
                     NotificationKind.SUMMARY, summarySlot, buildSummary(user, date)));
         }
 
+        // Недельный отчёт: по понедельникам присылаем итоги только что закончившейся недели (пн–вс).
+        LocalDateTime weeklySlot = date.atTime(props.weeklyReportTime());
+        if (date.getDayOfWeek() == DayOfWeek.MONDAY && isDue(now, weeklySlot)
+                && (user.getLastWeeklyReportDate() == null || user.getLastWeeklyReportDate().isBefore(date))) {
+            return Optional.of(new PendingNotification(userId, user.getTelegramChatId(),
+                    NotificationKind.WEEKLY_REPORT, weeklySlot, buildWeeklyReport(user, date)));
+        }
+
         // Берём последний наступивший слот напоминаний: более ранние уже неактуальны.
         // Времена у каждого пользователя свои (или стандартные); если напоминания выключены — список пуст.
         Optional<LocalDateTime> reminderSlot = reminderSettings.activeTimes(user).stream()
@@ -109,8 +124,19 @@ public class NotificationService {
         User user = users.findById(userId).orElseThrow();
         switch (kind) {
             case SUMMARY -> user.setLastSummaryDate(slot.toLocalDate());
+            case WEEKLY_REPORT -> user.setLastWeeklyReportDate(slot.toLocalDate());
             case REMINDER -> user.setLastReminderSlot(slot);
         }
+    }
+
+    /**
+     * Итоги прошедшей недели (с понедельника по воскресенье перед {@code monday}) и метрика продуктивности.
+     *
+     * @return текст; null, если за неделю не было ни одного дела (нечего считать)
+     */
+    private String buildWeeklyReport(User user, LocalDate monday) {
+        WeeklyStats stats = statsService.forPeriod(user, monday.minusDays(7), monday.minusDays(1), false);
+        return stats.hasData() ? ReportFormatter.format(stats, true) : null;
     }
 
     /** Слот «подошёл»: назначенное время наступило, и с тех пор прошло не больше catch-up-minutes. */
@@ -143,7 +169,7 @@ public class NotificationService {
                 sb.append("\n\n");
             }
             sb.append("Сегодня в списке: ").append(todayItems.size()).append(' ')
-                    .append(plural(todayItems.size(), "дело", "дела", "дел"))
+                    .append(Plurals.plural(todayItems.size(), "дело", "дела", "дел"))
                     .append(". Вставай и делай — /today");
         }
         return sb.isEmpty() ? null : sb.toString();
@@ -172,18 +198,5 @@ public class NotificationService {
         quote.ifPresent(q -> sb.append("\n«").append(q.getText()).append("» — ").append(q.getAuthor()).append('\n'));
         sb.append("\nОтметить выполненное: /today");
         return sb.toString();
-    }
-
-    /** Склонение по числу: 1 дело, 2 дела, 5 дел. */
-    static String plural(int n, String one, String few, String many) {
-        int mod100 = n % 100;
-        int mod10 = n % 10;
-        if (mod100 >= 11 && mod100 <= 14) {
-            return many;
-        }
-        if (mod10 == 1) {
-            return one;
-        }
-        return (mod10 >= 2 && mod10 <= 4) ? few : many;
     }
 }
