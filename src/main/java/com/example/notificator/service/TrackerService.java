@@ -78,8 +78,34 @@ public class TrackerService {
         }
         return entries.findByTaskUserAndDate(user, today).stream()
                 .sorted(Comparator.comparing(TaskEntry::getId)) // порядок добавления дел
-                .map(e -> new TodayItem(e.getTask().getTitle(), e.isDone()))
+                .map(e -> new TodayItem(e.getId(), e.getTask().getTitle(), e.isDone()))
                 .toList();
+    }
+
+    /**
+     * Отмечает дело выполненным (нажатие кнопки «✅»).
+     *
+     * Проверки важны, потому что callback-данные приходят от клиента и их можно подделать:
+     * отметка должна принадлежать этому пользователю и относиться к сегодняшнему дню
+     * (по его часовому поясу), иначе вчерашнее сообщение с кнопкой «задним числом» исправило бы статистику.
+     * Изменение сущности внутри транзакции Hibernate сохранит сам при её завершении.
+     */
+    public MarkResult markDone(long chatId, long entryId) {
+        User user = findUser(chatId);
+        TaskEntry entry = entries.findById(entryId)
+                .filter(e -> e.getTask().getUser().getId().equals(user.getId()))
+                .orElse(null);
+        if (entry == null) {
+            return MarkResult.NOT_FOUND;
+        }
+        if (!entry.getDate().equals(today(user))) {
+            return MarkResult.EXPIRED;
+        }
+        if (entry.isDone()) {
+            return MarkResult.ALREADY_DONE;
+        }
+        entry.markDone();
+        return MarkResult.DONE;
     }
 
     private User findUser(long chatId) {

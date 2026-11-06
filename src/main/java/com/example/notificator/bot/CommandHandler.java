@@ -1,16 +1,18 @@
 package com.example.notificator.bot;
 
+import com.example.notificator.service.MarkResult;
 import com.example.notificator.service.TodayItem;
 import com.example.notificator.service.TrackerService;
 import com.example.notificator.service.UserNotRegisteredException;
+import java.util.ArrayList;
 import java.util.List;
 import org.springframework.stereotype.Component;
 
 /**
- * Разбирает текст сообщения как команду бота и возвращает текст ответа.
+ * Разбирает команды и нажатия кнопок и возвращает, что ответить пользователю.
  *
- * Класс намеренно НЕ зависит от Telegram: на входе строка, на выходе строка. Поэтому его
- * можно проверить обычным юнит-тестом, а отправкой сообщений занимается {@link NotificatorBot}.
+ * Класс намеренно НЕ зависит от Telegram: на входе строки, на выходе {@link BotReply} / {@link CallbackResponse}.
+ * Поэтому его можно проверить обычным юнит-тестом, а общением с Telegram занимается {@link NotificatorBot}.
  */
 @Component
 public class CommandHandler {
@@ -18,10 +20,16 @@ public class CommandHandler {
     /** Ограничение длины названия дела, чтобы не засорять БД и сообщения. */
     static final int MAX_TITLE_LENGTH = 200;
 
+    /** Длинные названия на кнопке обрезаем, чтобы она не растягивалась. */
+    static final int MAX_BUTTON_TITLE_LENGTH = 30;
+
+    /** Префикс callback-данных кнопки «выполнено»: «done:<id отметки>». */
+    static final String DONE_PREFIX = "done:";
+
     static final String HELP = """
             Команды:
             /add Читать 30 минут — добавить дело
-            /today — дела на сегодня""";
+            /today — дела на сегодня (с кнопками «выполнено»)""";
 
     private final TrackerService service;
 
@@ -30,11 +38,12 @@ public class CommandHandler {
     }
 
     /**
+     * Обрабатывает текстовое сообщение.
+     *
      * @param chatId id чата Telegram (однозначно определяет пользователя)
      * @param text   текст сообщения, например «/add Читать 30 минут»
-     * @return текст, который нужно отправить пользователю
      */
-    public String handle(long chatId, String text) {
+    public BotReply handle(long chatId, String text) {
         // Разделяем «/add Читать» на команду и аргументы (максимум на 2 части).
         String[] parts = text.trim().split("\\s+", 2);
         // В группах Telegram дописывает имя бота: «/today@MyBot» — отбрасываем его.
@@ -43,13 +52,44 @@ public class CommandHandler {
 
         try {
             return switch (command) {
-                case "/start" -> start(chatId);
-                case "/add" -> add(chatId, args);
+                case "/start" -> BotReply.text(start(chatId));
+                case "/add" -> BotReply.text(add(chatId, args));
                 case "/today" -> today(chatId);
-                default -> "Не понял. " + HELP;
+                default -> BotReply.text("Не понял. " + HELP);
             };
         } catch (UserNotRegisteredException e) {
-            return "Сначала нажми /start.";
+            return BotReply.text("Сначала нажми /start.");
+        }
+    }
+
+    /**
+     * Обрабатывает нажатие inline-кнопки (CallbackQuery).
+     *
+     * @param data строка, заданная при создании кнопки, например «done:15»
+     */
+    public CallbackResponse handleCallback(long chatId, String data) {
+        if (data == null || !data.startsWith(DONE_PREFIX)) {
+            return new CallbackResponse("Неизвестное действие", null);
+        }
+        long entryId;
+        try {
+            entryId = Long.parseLong(data.substring(DONE_PREFIX.length()));
+        } catch (NumberFormatException e) {
+            return new CallbackResponse("Неизвестное действие", null);
+        }
+
+        try {
+            MarkResult result = service.markDone(chatId, entryId);
+            String notice = switch (result) {
+                case DONE -> "Выполнено ✅";
+                case ALREADY_DONE -> "Это дело уже выполнено";
+                case EXPIRED -> "Этот день уже закончился";
+                case NOT_FOUND -> "Дело не найдено";
+            };
+            // Всегда показываем актуальный список: так сообщение с кнопками не устаревает.
+            return new CallbackResponse(notice, today(chatId));
+        } catch (UserNotRegisteredException e) {
+            return new CallbackResponse("Сначала нажми /start", null);
         }
     }
 
@@ -72,12 +112,14 @@ public class CommandHandler {
         return "Добавлено: " + title;
     }
 
-    private String today(long chatId) {
+    /** Список дел на сегодня; под ним — кнопка «✅» для каждого невыполненного дела. */
+    private BotReply today(long chatId) {
         List<TodayItem> items = service.todayItems(chatId);
         if (items.isEmpty()) {
-            return "На сегодня дел нет. Добавь: /add Читать 30 минут";
+            return BotReply.text("На сегодня дел нет. Добавь: /add Читать 30 минут");
         }
         StringBuilder sb = new StringBuilder("Дела на сегодня:\n");
+        List<ReplyButton> buttons = new ArrayList<>();
         int doneCount = 0;
         for (int i = 0; i < items.size(); i++) {
             TodayItem item = items.get(i);
@@ -85,9 +127,22 @@ public class CommandHandler {
                     .append(i + 1).append(". ").append(item.title()).append('\n');
             if (item.done()) {
                 doneCount++;
+            } else {
+                buttons.add(new ReplyButton(
+                        "✅ " + (i + 1) + ". " + shorten(item.title()),
+                        DONE_PREFIX + item.entryId()));
             }
         }
-        return sb.append("\nВыполнено ").append(doneCount).append(" из ").append(items.size())
-                .toString();
+        sb.append("\nВыполнено ").append(doneCount).append(" из ").append(items.size());
+        if (buttons.isEmpty()) {
+            sb.append("\nВсе дела выполнены, день закрыт 💪");
+        }
+        return new BotReply(sb.toString(), buttons);
+    }
+
+    private static String shorten(String title) {
+        return title.length() <= MAX_BUTTON_TITLE_LENGTH
+                ? title
+                : title.substring(0, MAX_BUTTON_TITLE_LENGTH - 1) + "…";
     }
 }
