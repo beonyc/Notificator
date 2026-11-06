@@ -17,6 +17,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
@@ -141,6 +142,107 @@ class TrackerServiceTest {
 
         assertEquals(MarkResult.EXPIRED, service.markDone(CHAT, yesterday.getId()));
         assertFalse(yesterday.isDone());
+    }
+
+    @Test
+    void removeTaskDeactivatesItAndDropsTodaysUndoneEntry() {
+        service.register(CHAT);
+        service.addTask(CHAT, "Читать");
+        service.addTask(CHAT, "Зарядка");
+        long readId = service.activeTasks(CHAT).get(0).taskId();
+
+        assertEquals(Optional.of("Читать"), service.removeTask(CHAT, readId));
+
+        assertEquals(List.of("Зарядка"), service.activeTasks(CHAT).stream().map(TaskItem::title).toList());
+        assertEquals(List.of("Зарядка"), service.todayItems(CHAT).stream().map(TodayItem::title).toList());
+        assertFalse(tasks.findById(readId).orElseThrow().isActive()); // строка осталась в БД
+        assertEquals(1, entries.count());
+    }
+
+    @Test
+    void removedTaskKeepsDoneEntryInHistoryButIsHiddenFromToday() {
+        service.register(CHAT);
+        service.addTask(CHAT, "Читать");
+        long entryId = service.todayItems(CHAT).get(0).entryId();
+        service.markDone(CHAT, entryId);
+        long taskId = service.activeTasks(CHAT).get(0).taskId();
+
+        service.removeTask(CHAT, taskId);
+
+        assertTrue(entries.findById(entryId).orElseThrow().isDone());
+        assertTrue(service.todayItems(CHAT).isEmpty());
+    }
+
+    @Test
+    void removeTaskRejectsOtherUsersAndAlreadyRemovedTasks() {
+        service.register(CHAT);
+        service.register(CHAT + 1);
+        service.addTask(CHAT, "Чужое дело");
+        long taskId = service.activeTasks(CHAT).get(0).taskId();
+
+        assertTrue(service.removeTask(CHAT + 1, taskId).isEmpty());
+        assertEquals(1, service.activeTasks(CHAT).size());
+        assertTrue(service.removeTask(CHAT, taskId).isPresent());
+        assertTrue(service.removeTask(CHAT, taskId).isEmpty()); // повторно — уже удалено
+        assertTrue(service.removeTask(CHAT, 987654L).isEmpty());
+    }
+
+    @Test
+    void markAllDoneMarksOnlyNotDoneEntriesAndCountsThem() {
+        service.register(CHAT);
+        service.addTask(CHAT, "Читать");
+        service.addTask(CHAT, "Зарядка");
+        service.addTask(CHAT, "Сон");
+        service.markDone(CHAT, service.todayItems(CHAT).get(0).entryId()); // одно уже выполнено
+
+        assertEquals(2, service.markAllDone(CHAT));
+
+        assertTrue(service.todayItems(CHAT).stream().allMatch(TodayItem::done));
+        assertEquals(0, service.markAllDone(CHAT)); // повторно — нечего отмечать
+    }
+
+    @Test
+    void markAllDoneCreatesMissingEntriesAndDoesNotTouchOtherUsers() {
+        service.register(CHAT);
+        service.register(CHAT + 1);
+        User user = users.findByTelegramChatId(CHAT).orElseThrow();
+        tasks.save(new Task(user, "Добавлено вчера")); // отметки на сегодня ещё нет
+        service.addTask(CHAT + 1, "Чужое");
+
+        assertEquals(1, service.markAllDone(CHAT));
+
+        assertFalse(service.todayItems(CHAT + 1).get(0).done());
+    }
+
+    @Test
+    void removeAllTasksDeactivatesEverythingKeepsDoneHistoryAndOtherUsers() {
+        service.register(CHAT);
+        service.register(CHAT + 1);
+        service.addTask(CHAT, "Читать");
+        service.addTask(CHAT, "Зарядка");
+        service.addTask(CHAT + 1, "Чужое");
+        long doneEntryId = service.todayItems(CHAT).get(0).entryId();
+        service.markDone(CHAT, doneEntryId);
+
+        assertEquals(2, service.removeAllTasks(CHAT));
+
+        assertTrue(service.activeTasks(CHAT).isEmpty());
+        assertTrue(service.todayItems(CHAT).isEmpty());
+        assertTrue(entries.findById(doneEntryId).orElseThrow().isDone()); // история сохранена
+        assertEquals(1, service.activeTasks(CHAT + 1).size()); // чужие дела не тронуты
+        assertEquals(0, service.removeAllTasks(CHAT)); // повторно — удалять нечего
+    }
+
+    @Test
+    void unregisteredUserCannotBulkOperate() {
+        assertThrows(UserNotRegisteredException.class, () -> service.markAllDone(CHAT));
+        assertThrows(UserNotRegisteredException.class, () -> service.removeAllTasks(CHAT));
+    }
+
+    @Test
+    void unregisteredUserCannotRemoveOrListTasks() {
+        assertThrows(UserNotRegisteredException.class, () -> service.removeTask(CHAT, 1L));
+        assertThrows(UserNotRegisteredException.class, () -> service.activeTasks(CHAT));
     }
 
     @Test

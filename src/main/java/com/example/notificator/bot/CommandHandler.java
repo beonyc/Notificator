@@ -1,6 +1,7 @@
 package com.example.notificator.bot;
 
 import com.example.notificator.service.MarkResult;
+import com.example.notificator.service.TaskItem;
 import com.example.notificator.service.TodayItem;
 import com.example.notificator.service.TrackerService;
 import com.example.notificator.service.UserNotRegisteredException;
@@ -26,10 +27,24 @@ public class CommandHandler {
     /** Префикс callback-данных кнопки «выполнено»: «done:<id отметки>». */
     static final String DONE_PREFIX = "done:";
 
+    /** Префикс callback-данных кнопки «удалить дело»: «rm:<id дела>». */
+    static final String REMOVE_PREFIX = "rm:";
+
+    /** Кнопка «Выполнить все» под списком /today (показывается, если невыполненных дел два и больше). */
+    static final String DONE_ALL = "doneall";
+
+    /** Кнопка «Удалить все» под списком /remove (показывается, если дел два и больше) и шаги подтверждения. */
+    static final String REMOVE_ALL = "rmall";
+    static final String REMOVE_ALL_YES = "rmall:yes";
+    static final String REMOVE_ALL_NO = "rmall:no";
+
+    private static final CallbackResponse UNKNOWN_ACTION = new CallbackResponse("Неизвестное действие", null);
+
     static final String HELP = """
             Команды:
             /add Читать 30 минут — добавить дело
-            /today — дела на сегодня (с кнопками «выполнено»)""";
+            /today — дела на сегодня (с кнопками «выполнено»)
+            /remove — убрать дело из списка""";
 
     private final TrackerService service;
 
@@ -55,6 +70,7 @@ public class CommandHandler {
                 case "/start" -> BotReply.text(start(chatId));
                 case "/add" -> BotReply.text(add(chatId, args));
                 case "/today" -> today(chatId);
+                case "/remove" -> remove(chatId);
                 default -> BotReply.text("Не понял. " + HELP);
             };
         } catch (UserNotRegisteredException e) {
@@ -68,29 +84,91 @@ public class CommandHandler {
      * @param data строка, заданная при создании кнопки, например «done:15»
      */
     public CallbackResponse handleCallback(long chatId, String data) {
-        if (data == null || !data.startsWith(DONE_PREFIX)) {
-            return new CallbackResponse("Неизвестное действие", null);
+        if (data == null) {
+            return UNKNOWN_ACTION;
         }
-        long entryId;
         try {
-            entryId = Long.parseLong(data.substring(DONE_PREFIX.length()));
-        } catch (NumberFormatException e) {
-            return new CallbackResponse("Неизвестное действие", null);
-        }
-
-        try {
-            MarkResult result = service.markDone(chatId, entryId);
-            String notice = switch (result) {
-                case DONE -> "Выполнено ✅";
-                case ALREADY_DONE -> "Это дело уже выполнено";
-                case EXPIRED -> "Этот день уже закончился";
-                case NOT_FOUND -> "Дело не найдено";
-            };
-            // Всегда показываем актуальный список: так сообщение с кнопками не устаревает.
-            return new CallbackResponse(notice, today(chatId));
+            // Кнопки без id сравниваем целиком; они не пересекаются с префиксами «done:» и «rm:».
+            switch (data) {
+                case DONE_ALL:
+                    return markAllDone(chatId);
+                case REMOVE_ALL:
+                    return confirmRemoveAll(chatId);
+                case REMOVE_ALL_YES:
+                    return removeAll(chatId);
+                case REMOVE_ALL_NO:
+                    return new CallbackResponse("Отменено", remove(chatId));
+                default:
+                    break;
+            }
+            if (data.startsWith(DONE_PREFIX)) {
+                Long entryId = parseId(data, DONE_PREFIX);
+                return entryId == null ? UNKNOWN_ACTION : markDone(chatId, entryId);
+            }
+            if (data.startsWith(REMOVE_PREFIX)) {
+                Long taskId = parseId(data, REMOVE_PREFIX);
+                return taskId == null ? UNKNOWN_ACTION : removeTask(chatId, taskId);
+            }
+            return UNKNOWN_ACTION;
         } catch (UserNotRegisteredException e) {
             return new CallbackResponse("Сначала нажми /start", null);
         }
+    }
+
+    /** Достаёт id из данных кнопки вида «done:15»; null, если после префикса не число. */
+    private static Long parseId(String data, String prefix) {
+        try {
+            return Long.parseLong(data.substring(prefix.length()));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private CallbackResponse markDone(long chatId, long entryId) {
+        MarkResult result = service.markDone(chatId, entryId);
+        String notice = switch (result) {
+            case DONE -> "Выполнено ✅";
+            case ALREADY_DONE -> "Это дело уже выполнено";
+            case EXPIRED -> "Этот день уже закончился";
+            case NOT_FOUND -> "Дело не найдено";
+        };
+        // Всегда показываем актуальный список: так сообщение с кнопками не устаревает.
+        return new CallbackResponse(notice, today(chatId));
+    }
+
+    private CallbackResponse markAllDone(long chatId) {
+        int count = service.markAllDone(chatId);
+        String notice = count == 0 ? "Все дела уже выполнены" : "Выполнено дел: " + count + " ✅";
+        return new CallbackResponse(notice, today(chatId));
+    }
+
+    /**
+     * Удаление всех дел необратимо, поэтому сначала просим подтверждение
+     * (случайное нажатие не должно стирать весь список).
+     */
+    private CallbackResponse confirmRemoveAll(long chatId) {
+        int count = service.activeTasks(chatId).size();
+        if (count == 0) {
+            return new CallbackResponse("Дел для удаления нет", remove(chatId));
+        }
+        BotReply confirm = new BotReply(
+                "Удалить все дела (" + count + ")? Это нельзя отменить.",
+                List.of(new ReplyButton("🗑 Да, удалить все", REMOVE_ALL_YES),
+                        new ReplyButton("↩️ Отмена", REMOVE_ALL_NO)));
+        return new CallbackResponse(null, confirm);
+    }
+
+    private CallbackResponse removeAll(long chatId) {
+        int count = service.removeAllTasks(chatId);
+        String notice = count == 0 ? "Дел для удаления нет" : "Удалено дел: " + count;
+        return new CallbackResponse(notice, remove(chatId));
+    }
+
+    private CallbackResponse removeTask(long chatId, long taskId) {
+        String notice = service.removeTask(chatId, taskId)
+                .map(title -> "Удалено: " + shorten(title))
+                .orElse("Дело не найдено");
+        return new CallbackResponse(notice, remove(chatId));
     }
 
     private String start(long chatId) {
@@ -133,11 +211,35 @@ public class CommandHandler {
                         DONE_PREFIX + item.entryId()));
             }
         }
+        if (buttons.size() >= 2) {
+            buttons.add(new ReplyButton("✅ Выполнить все", DONE_ALL));
+        }
         sb.append("\nВыполнено ").append(doneCount).append(" из ").append(items.size());
         if (buttons.isEmpty()) {
             sb.append("\nВсе дела выполнены, день закрыт 💪");
         }
         return new BotReply(sb.toString(), buttons);
+    }
+
+    /** Список дел для удаления: по кнопке «🗑» на каждое активное дело. */
+    private BotReply remove(long chatId) {
+        List<TaskItem> items = service.activeTasks(chatId);
+        if (items.isEmpty()) {
+            return BotReply.text("Дел для удаления нет. Добавь: /add Читать 30 минут");
+        }
+        StringBuilder sb = new StringBuilder("Какое дело убрать из списка?\n");
+        List<ReplyButton> buttons = new ArrayList<>();
+        for (int i = 0; i < items.size(); i++) {
+            TaskItem item = items.get(i);
+            sb.append(i + 1).append(". ").append(item.title()).append('\n');
+            buttons.add(new ReplyButton(
+                    "🗑 " + (i + 1) + ". " + shorten(item.title()),
+                    REMOVE_PREFIX + item.taskId()));
+        }
+        if (items.size() >= 2) {
+            buttons.add(new ReplyButton("🗑 Удалить все", REMOVE_ALL));
+        }
+        return new BotReply(sb.toString().stripTrailing(), buttons);
     }
 
     private static String shorten(String title) {

@@ -11,6 +11,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -71,12 +72,9 @@ public class TrackerService {
         User user = findUser(chatId);
         LocalDate today = today(user);
 
-        for (Task task : tasks.findByUserAndActiveTrue(user)) {
-            if (entries.findByTaskAndDate(task, today).isEmpty()) {
-                entries.save(new TaskEntry(task, today));
-            }
-        }
+        ensureTodayEntries(user, today);
         return entries.findByTaskUserAndDate(user, today).stream()
+                .filter(e -> e.getTask().isActive()) // выполненное, но потом удалённое дело не показываем
                 .sorted(Comparator.comparing(TaskEntry::getId)) // порядок добавления дел
                 .map(e -> new TodayItem(e.getId(), e.getTask().getTitle(), e.isDone()))
                 .toList();
@@ -106,6 +104,82 @@ public class TrackerService {
         }
         entry.markDone();
         return MarkResult.DONE;
+    }
+
+    /**
+     * Отмечает выполненными все невыполненные дела на сегодня (кнопка «Выполнить все»).
+     *
+     * @return сколько дел отмечено; 0, если все уже были выполнены или дел нет
+     */
+    public int markAllDone(long chatId) {
+        User user = findUser(chatId);
+        LocalDate today = today(user);
+
+        ensureTodayEntries(user, today);
+        List<TaskEntry> notDone = entries.findByTaskUserAndDateAndDoneFalse(user, today).stream()
+                .filter(e -> e.getTask().isActive())
+                .toList();
+        notDone.forEach(TaskEntry::markDone);
+        return notDone.size();
+    }
+
+    /**
+     * Удаляет все активные дела пользователя (кнопка «Удалить все»). Правила те же, что у
+     * {@link #removeTask}: мягкое удаление, невыполненные отметки на сегодня стираются,
+     * выполненные остаются в истории.
+     *
+     * @return сколько дел удалено
+     */
+    public int removeAllTasks(long chatId) {
+        User user = findUser(chatId);
+        LocalDate today = today(user);
+
+        List<Task> active = tasks.findByUserAndActiveTrue(user);
+        active.forEach(task -> deactivate(task, today));
+        return active.size();
+    }
+
+    /** Активные дела пользователя в порядке добавления (список для /remove). */
+    public List<TaskItem> activeTasks(long chatId) {
+        return tasks.findByUserAndActiveTrue(findUser(chatId)).stream()
+                .sorted(Comparator.comparing(Task::getId))
+                .map(t -> new TaskItem(t.getId(), t.getTitle()))
+                .toList();
+    }
+
+    /**
+     * Удаляет дело (команда /remove). Это «мягкое удаление»: дело становится неактивным и больше
+     * не попадает в списки и новые дни, но строка и выполненные отметки остаются в БД —
+     * чтобы не искажалась статистика за прошлые дни. Невыполненная отметка на сегодня удаляется,
+     * иначе удалённое дело считалось бы проваленным в итоге дня.
+     * Дело должно принадлежать пользователю (callback-данные можно подделать).
+     *
+     * @return название удалённого дела; пусто, если дело не найдено, чужое или уже удалено
+     */
+    public Optional<String> removeTask(long chatId, long taskId) {
+        User user = findUser(chatId);
+        return tasks.findById(taskId)
+                .filter(t -> t.getUser().getId().equals(user.getId()))
+                .filter(Task::isActive)
+                .map(task -> {
+                    deactivate(task, today(user));
+                    return task.getTitle();
+                });
+    }
+
+    /** Мягко удаляет дело: делает неактивным и стирает его невыполненную отметку за сегодня. */
+    private void deactivate(Task task, LocalDate today) {
+        task.setActive(false);
+        entries.deleteByTaskAndDateAndDoneFalse(task, today);
+    }
+
+    /** Создаёт отметки на сегодня для активных дел, у которых их ещё нет. */
+    private void ensureTodayEntries(User user, LocalDate today) {
+        for (Task task : tasks.findByUserAndActiveTrue(user)) {
+            if (entries.findByTaskAndDate(task, today).isEmpty()) {
+                entries.save(new TaskEntry(task, today));
+            }
+        }
     }
 
     private User findUser(long chatId) {
