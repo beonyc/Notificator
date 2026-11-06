@@ -28,6 +28,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -83,6 +85,8 @@ public class CommandHandler {
     /** Время в команде /reminders: «9», «9:00», «09.30» (час 0–23, минуты 0–59 проверяются отдельно). */
     private static final Pattern TIME = Pattern.compile("^(\\d{1,2})(?:[:.](\\d{2}))?$");
 
+    private static final Logger log = LoggerFactory.getLogger(CommandHandler.class);
+
     private static final CallbackResponse UNKNOWN_ACTION = new CallbackResponse("Неизвестное действие", null);
 
     /** Список команд для приветствия и подсказки. Текст с HTML-разметкой (&lt;b&gt;): бот шлёт всё с parse_mode=HTML. */
@@ -130,23 +134,36 @@ public class CommandHandler {
             // Любая другая команда (кроме /cancel) означает «передумал» и сбрасывает ожидание.
             if (awaitingTimes.contains(chatId)) {
                 if (!text.trim().startsWith("/")) {
+                    log.info("Бот ждал время напоминаний, разбираю ответ как список времён");
                     return setTimesFromText(chatId, text.trim(), true);
                 }
                 if (!command.equals("/cancel")) {
                     awaitingTimes.remove(chatId);
+                    log.info("Ожидание времени напоминаний сброшено: пришла другая команда {}", command);
                 }
             }
+            if (command.startsWith("/")) {
+                log.info("Команда {}{}", command, args.isEmpty() ? "" : " с аргументами «" + args + "»");
+            }
             return switch (command) {
-                case "/cancel" -> BotReply.text(awaitingTimes.remove(chatId) ? "↩️ Отменено." : "🤷 Отменять нечего.");
+                case "/cancel" -> {
+                    boolean wasWaiting = awaitingTimes.remove(chatId);
+                    log.info("Отмена: {}", wasWaiting ? "ожидание времени напоминаний прекращено" : "отменять было нечего");
+                    yield BotReply.text(wasWaiting ? "↩️ Отменено." : "🤷 Отменять нечего.");
+                }
                 case "/start" -> BotReply.text(start(chatId));
                 case "/add" -> BotReply.text(add(chatId, args));
                 case "/today" -> today(chatId);
                 case "/remove" -> remove(chatId);
                 case "/reminders" -> reminders(chatId, args);
                 case "/week" -> weekReport(chatId);
-                default -> BotReply.text("🤔 Не понял.\n\n" + HELP);
+                default -> {
+                    log.info("Не понял ввод (не команда бота), показываю подсказку со списком команд");
+                    yield BotReply.text("🤔 Не понял.\n\n" + HELP);
+                }
             };
         } catch (UserNotRegisteredException e) {
+            log.info("Пользователь не зарегистрирован: прошу нажать /start");
             return BotReply.text("👋 Сначала нажми /start.");
         }
     }
@@ -157,6 +174,15 @@ public class CommandHandler {
      * @param data строка, заданная при создании кнопки, например «done:15»
      */
     public CallbackResponse handleCallback(long chatId, String data) {
+        CallbackResponse response = dispatchCallback(chatId, data);
+        if (response == UNKNOWN_ACTION) {
+            // Такого действия бот не создавал (или данные повреждены/подделаны) — предупреждение, а не ошибка.
+            log.warn("Неизвестные или некорректные данные кнопки: {}", data);
+        }
+        return response;
+    }
+
+    private CallbackResponse dispatchCallback(long chatId, String data) {
         if (data == null) {
             return UNKNOWN_ACTION;
         }
@@ -211,6 +237,7 @@ public class CommandHandler {
             }
             return UNKNOWN_ACTION;
         } catch (UserNotRegisteredException e) {
+            log.info("Кнопка нажата незарегистрированным пользователем: прошу нажать /start");
             return new CallbackResponse("Сначала нажми /start", null);
         }
     }
@@ -399,6 +426,7 @@ public class CommandHandler {
     private CallbackResponse askForTimes(long chatId) {
         ReminderSettings s = reminderSettings.get(chatId); // заодно проверяет, что пользователь зарегистрирован
         awaitingTimes.add(chatId);
+        log.info("Жду от пользователя время напоминаний (нажата «Изменить время»)");
         BotReply prompt = new BotReply(
                 "⏰ <b>Отправь время напоминаний</b> одним сообщением, например:\n"
                         + "<code>9:00 14:30 20:00</code>\n\n"

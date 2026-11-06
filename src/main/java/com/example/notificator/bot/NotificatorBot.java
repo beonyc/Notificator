@@ -1,5 +1,7 @@
 package com.example.notificator.bot;
 
+import com.example.notificator.util.LogContext;
+import com.example.notificator.util.LogText;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -85,15 +87,33 @@ public class NotificatorBot implements SpringLongPollingBot, LongPollingSingleTh
      */
     @Override
     public void consume(Update update) {
+        // Логирование шагов: «→» — что пришло от пользователя, «←» — что бот ответил или сделал.
+        // Номер чата кладём в MDC: он автоматически попадёт в каждую строку лога, в том числе из сервисов.
         if (update.hasMessage() && update.getMessage().hasText()) {
-            onMessage(update.getMessage().getChatId(), update.getMessage().getText());
+            long chatId = update.getMessage().getChatId();
+            try (var ignored = LogContext.forChat(chatId)) {
+                onMessage(chatId, update.getMessage().getText());
+            }
         } else if (update.hasCallbackQuery()) {
-            onCallback(update.getCallbackQuery());
+            CallbackQuery callback = update.getCallbackQuery();
+            if (callback.getMessage() == null) {
+                log.info("→ пропущено: кнопка без сообщения (inline-режим), id обновления {}", update.getUpdateId());
+                return;
+            }
+            try (var ignored = LogContext.forChat(callback.getMessage().getChatId())) {
+                onCallback(callback);
+            }
+        } else if (update.hasMessage()) {
+            try (var ignored = LogContext.forChat(update.getMessage().getChatId())) {
+                log.info("→ пропущено: сообщение без текста (стикер, фото и т.п.)");
+            }
+        } else {
+            log.info("→ пропущено: обновление неподдерживаемого типа, id {}", update.getUpdateId());
         }
     }
 
     private void onMessage(long chatId, String text) {
-        log.info("Получено сообщение из чата {}: {}", chatId, text);
+        log.info("→ сообщение: {}", LogText.oneLine(text));
         BotReply reply;
         try {
             reply = commandHandler.handle(chatId, text);
@@ -112,7 +132,8 @@ public class NotificatorBot implements SpringLongPollingBot, LongPollingSingleTh
                 .build();
         try {
             telegramClient.execute(message);
-            log.info(message.toString());
+            log.info("← ответ ({} симв., кнопок: {}): {}", reply.text().length(), reply.buttons().size(),
+                    LogText.oneLine(reply.text()));
         } catch (TelegramApiException e) {
             // Ошибку логируем и не пробрасываем: одно неудавшееся сообщение
             // не должно останавливать работу бота.
@@ -125,11 +146,9 @@ public class NotificatorBot implements SpringLongPollingBot, LongPollingSingleTh
      * (editMessageText), чтобы выполненное дело сразу получило ✅ и потеряло кнопку.
      */
     private void onCallback(CallbackQuery callback) {
-        if (callback.getMessage() == null) {
-            return; // кнопка из inline-режима — мы такие не создаём
-        }
         long chatId = callback.getMessage().getChatId();
         int messageId = callback.getMessage().getMessageId();
+        log.info("→ нажата кнопка: {} (сообщение {})", callback.getData(), messageId);
 
         CallbackResponse response;
         try {
@@ -145,6 +164,7 @@ public class NotificatorBot implements SpringLongPollingBot, LongPollingSingleTh
                     .callbackQueryId(callback.getId())
                     .text(response.notice())
                     .build());
+            log.info("← всплывающее уведомление: {}", response.notice() == null ? "нет" : response.notice());
         } catch (TelegramApiException e) {
             log.error("Не удалось ответить на нажатие кнопки в чате {}", chatId, e);
         }
@@ -158,6 +178,8 @@ public class NotificatorBot implements SpringLongPollingBot, LongPollingSingleTh
                         .parseMode(HTML)
                         .replyMarkup(toMarkup(response.view().buttons()))
                         .build());
+                log.info("← сообщение {} обновлено (кнопок: {}): {}", messageId, response.view().buttons().size(),
+                        LogText.oneLine(response.view().text()));
             } catch (TelegramApiException e) {
                 // Частый безобидный случай: «message is not modified» (текст не изменился).
                 log.warn("Не удалось обновить сообщение {} в чате {}: {}", messageId, chatId, e.getMessage());

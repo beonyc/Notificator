@@ -1,5 +1,8 @@
 package com.example.notificator.notification;
 
+import com.example.notificator.util.LogContext;
+import com.example.notificator.util.LogText;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -33,7 +36,10 @@ public class NotificationScheduler {
     /** Cron «0 * * * * *» — в нулевую секунду каждой минуты. */
     @Scheduled(cron = "0 * * * * *")
     public void tick() {
-        for (long userId : service.userIds()) {
+        List<Long> userIds = service.userIds();
+        // debug: тик идёт каждую минуту, на уровне INFO он забил бы лог; шаги с действиями пишутся как INFO
+        log.debug("Проверка уведомлений: пользователей {}", userIds.size());
+        for (long userId : userIds) {
             try {
                 service.prepare(userId).ifPresent(this::deliver);
             } catch (RuntimeException e) {
@@ -45,11 +51,18 @@ public class NotificationScheduler {
     }
 
     private void deliver(PendingNotification n) {
-        if (n.text() != null && !notifier.send(n.chatId(), n.text())) {
-            return; // не отправилось — слот не отмечаем, повторим в следующую минуту
+        // номер чата попадает в каждую строку лога этой доставки
+        try (var ignored = LogContext.forChat(n.chatId())) {
+            log.info("Подошло уведомление {} (слот {}): {}", n.kind(), n.slot(),
+                    n.text() == null ? "слать нечего" : LogText.oneLine(n.text()));
+            if (n.text() != null && !notifier.send(n.chatId(), n.text())) {
+                // не отправилось — слот не отмечаем, повторим в следующую минуту
+                log.warn("Уведомление {} не отправлено, повторим в следующую минуту (слот {})", n.kind(), n.slot());
+                return;
+            }
+            service.markHandled(n.userId(), n.kind(), n.slot());
+            log.info("Уведомление {} (слот {}) {}, слот отмечен обработанным", n.kind(), n.slot(),
+                    n.text() == null ? "пропущено" : "отправлено");
         }
-        service.markHandled(n.userId(), n.kind(), n.slot());
-        log.info("Уведомление {} для пользователя {} {}", n.kind(), n.userId(),
-                n.text() == null ? "пропущено (слать нечего)" : "отправлено");
     }
 }

@@ -10,6 +10,8 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.random.RandomGenerator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +27,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @Transactional
 public class QuoteService {
+
+    private static final Logger log = LoggerFactory.getLogger(QuoteService.class);
 
     private final QuoteRepository quotes;
     private final Clock clock;
@@ -47,6 +51,7 @@ public class QuoteService {
     public Optional<Quote> pickQuote() {
         List<Quote> all = quotes.findAll();
         if (all.isEmpty()) {
+            log.warn("Цитата: в БД нет ни одной цитаты, напоминание уйдёт без неё");
             return Optional.empty();
         }
         Instant now = clock.instant();
@@ -60,6 +65,8 @@ public class QuoteService {
                 ? all.stream().min(Comparator.comparing(Quote::getLastUsedAt)).orElseThrow()
                 : fresh.get(random.nextInt(fresh.size()));
         chosen.setLastUsedAt(now); // сущность управляется Hibernate — изменение сохранится при коммите
+        log.info("Цитата выбрана: id={} ({}), свежих цитат было {} из {}{}", chosen.getId(), chosen.getAuthor(),
+                fresh.size(), all.size(), fresh.isEmpty() ? " — взята самая давняя" : "");
         return Optional.of(chosen);
     }
 }
