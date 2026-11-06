@@ -2,6 +2,7 @@ package com.example.notificator.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -82,8 +83,10 @@ class TrackerServiceTest {
                 .filter(e -> e.getTask().getTitle().equals("Читать")).findFirst().orElseThrow();
         first.markDone();
 
-        assertEquals(List.of(new TodayItem("Читать", true), new TodayItem("Зарядка", false)),
-                service.todayItems(CHAT));
+        List<TodayItem> items = service.todayItems(CHAT);
+
+        assertEquals(List.of("Читать", "Зарядка"), items.stream().map(TodayItem::title).toList());
+        assertEquals(List.of(true, false), items.stream().map(TodayItem::done).toList());
     }
 
     @Test
@@ -92,8 +95,57 @@ class TrackerServiceTest {
         User user = users.findByTelegramChatId(CHAT).orElseThrow();
         tasks.save(new Task(user, "Добавлено вчера")); // отметки на сегодня нет
 
-        assertEquals(List.of(new TodayItem("Добавлено вчера", false)), service.todayItems(CHAT));
+        assertEquals("Добавлено вчера", service.todayItems(CHAT).get(0).title());
         assertEquals(1, service.todayItems(CHAT).size()); // повторный вызов не плодит дубликаты
+    }
+
+    @Test
+    void markDoneSetsDoneAndTimeThenReportsAlreadyDone() {
+        service.register(CHAT);
+        service.addTask(CHAT, "Читать");
+        long entryId = service.todayItems(CHAT).get(0).entryId();
+
+        assertEquals(MarkResult.DONE, service.markDone(CHAT, entryId));
+
+        TaskEntry entry = entries.findById(entryId).orElseThrow();
+        assertTrue(entry.isDone());
+        assertNotNull(entry.getDoneAt());
+        assertTrue(service.todayItems(CHAT).get(0).done());
+        assertEquals(MarkResult.ALREADY_DONE, service.markDone(CHAT, entryId));
+    }
+
+    @Test
+    void markDoneRejectsEntryOfAnotherUser() {
+        service.register(CHAT);
+        service.register(CHAT + 1);
+        service.addTask(CHAT, "Чужое дело");
+        long entryId = service.todayItems(CHAT).get(0).entryId();
+
+        assertEquals(MarkResult.NOT_FOUND, service.markDone(CHAT + 1, entryId));
+        assertFalse(entries.findById(entryId).orElseThrow().isDone());
+    }
+
+    @Test
+    void markDoneRejectsUnknownEntry() {
+        service.register(CHAT);
+
+        assertEquals(MarkResult.NOT_FOUND, service.markDone(CHAT, 987654L));
+    }
+
+    @Test
+    void markDoneRejectsEntryFromPreviousDay() {
+        service.register(CHAT);
+        User user = users.findByTelegramChatId(CHAT).orElseThrow();
+        Task task = tasks.save(new Task(user, "Вчерашнее"));
+        TaskEntry yesterday = entries.save(new TaskEntry(task, MOSCOW_TODAY.minusDays(1)));
+
+        assertEquals(MarkResult.EXPIRED, service.markDone(CHAT, yesterday.getId()));
+        assertFalse(yesterday.isDone());
+    }
+
+    @Test
+    void unregisteredUserCannotMarkDone() {
+        assertThrows(UserNotRegisteredException.class, () -> service.markDone(CHAT, 1L));
     }
 
     @Test
