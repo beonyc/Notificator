@@ -75,6 +75,7 @@ public class EchoBot implements SpringLongPollingBot, LongPollingSingleThreadUpd
                     .build();
             try {
                 telegramClient.execute(reply);
+                log.info(reply.toString());
             } catch (TelegramApiException e) {
                 // Ошибку логируем и не пробрасываем: одно неудавшееся сообщение
                 // не должно останавливать работу бота.
