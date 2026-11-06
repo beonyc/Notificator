@@ -38,3 +38,11 @@ out/
 
 ### VS Code ###
 .vscode/
+
+### Проект Notificator ###
+# Файл базы H2 (SPEC.md: ./data/tracker.mv.db)
+data/
+# Локальные настройки и секреты
+.env
+application-local.yaml
+application-local.yml
