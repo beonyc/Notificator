@@ -201,7 +201,13 @@ public class NotificatorBot implements SpringLongPollingBot, LongPollingSingleTh
         for (int from = 0; from < buttons.size(); from += columns) {
             InlineKeyboardRow row = new InlineKeyboardRow();
             for (ReplyButton b : buttons.subList(from, Math.min(from + columns, buttons.size()))) {
-                row.add(InlineKeyboardButton.builder().text(b.text()).callbackData(b.callbackData()).build());
+                InlineKeyboardButton.InlineKeyboardButtonBuilder<?, ?> button = InlineKeyboardButton.builder()
+                        .text(b.text())
+                        .callbackData(b.callbackData());
+                if (b.style() != null) {
+                    button.style(b.style()); // цвет кнопки; без стиля поле вообще не отправляем
+                }
+                row.add(button.build());
             }
             rows.add(row);
         }

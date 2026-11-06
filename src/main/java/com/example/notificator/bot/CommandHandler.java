@@ -319,8 +319,8 @@ public class CommandHandler {
         }
         BotReply confirm = withMenu(new BotReply(
                 "⚠️ <b>Удалить все дела (" + count + ")?</b>\nЭто нельзя отменить.",
-                List.of(new ReplyButton("🗑 Да, удалить все", REMOVE_ALL_YES),
-                        new ReplyButton("↩️ Отмена", REMOVE_ALL_NO))));
+                List.of(new ReplyButton("🗑 Да, удалить все", REMOVE_ALL_YES, ReplyButton.DANGER),
+                        new ReplyButton("↩️ Отмена", REMOVE_ALL_NO, ReplyButton.PRIMARY))));
         return new CallbackResponse(null, confirm);
     }
 
@@ -448,7 +448,7 @@ public class CommandHandler {
             }
         }
         if (buttons.size() >= 2) {
-            buttons.add(new ReplyButton("✅ Выполнить все", DONE_ALL));
+            buttons.add(new ReplyButton("✅ ВЫПОЛНИТЬ ВСЕ", DONE_ALL, ReplyButton.SUCCESS));
         }
         int percent = Visuals.percent(doneCount, items.size());
         sb.append('\n').append(Visuals.bar(percent)).append(' ').append(percent).append("%\n")
@@ -713,7 +713,7 @@ public class CommandHandler {
                     REMOVE_PREFIX + item.taskId()));
         }
         if (items.size() >= 2) {
-            buttons.add(new ReplyButton("🗑 Удалить все", REMOVE_ALL));
+            buttons.add(new ReplyButton("⚠️ УДАЛИТЬ ВСЕ", REMOVE_ALL, ReplyButton.DANGER));
         }
         return withMenu(new BotReply(sb.toString().stripTrailing(), buttons));
     }

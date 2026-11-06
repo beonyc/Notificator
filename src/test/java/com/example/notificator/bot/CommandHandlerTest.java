@@ -495,7 +495,7 @@ class CommandHandlerTest {
                 1. Читать
                 2. Зарядка""", reply.text());
         assertEquals(List.of(new ReplyButton("🗑 1. Читать", "rm:7"), new ReplyButton("🗑 2. Зарядка", "rm:8"),
-                new ReplyButton("🗑 Удалить все", "rmall"), MENU), reply.buttons());
+                new ReplyButton("⚠️ УДАЛИТЬ ВСЕ", "rmall", "danger"), MENU), reply.buttons());
     }
 
     @Test
@@ -513,7 +513,7 @@ class CommandHandlerTest {
         List<ReplyButton> buttons = handler.handle(CHAT, "/today").buttons();
 
         // две кнопки дел, «Выполнить все» и «В меню» (меню — всегда последняя)
-        assertEquals(new ReplyButton("✅ Выполнить все", "doneall"), buttons.get(buttons.size() - 2));
+        assertEquals(new ReplyButton("✅ ВЫПОЛНИТЬ ВСЕ", "doneall", "success"), buttons.get(buttons.size() - 2));
         assertEquals(MENU, buttons.get(buttons.size() - 1));
         assertEquals(4, buttons.size());
     }
@@ -554,8 +554,8 @@ class CommandHandlerTest {
 
         verify(service, never()).removeAllTasks(anyLong());
         assertTrue(response.view().text().contains("Удалить все дела (2)?"));
-        assertEquals(List.of(new ReplyButton("🗑 Да, удалить все", "rmall:yes"),
-                new ReplyButton("↩️ Отмена", "rmall:no"), MENU), response.view().buttons());
+        assertEquals(List.of(new ReplyButton("🗑 Да, удалить все", "rmall:yes", "danger"),
+                new ReplyButton("↩️ Отмена", "rmall:no", "primary"), MENU), response.view().buttons());
     }
 
     @Test
