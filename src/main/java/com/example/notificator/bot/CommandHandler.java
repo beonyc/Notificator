@@ -100,12 +100,17 @@ public class CommandHandler {
     static final String MENU_REMINDERS = "reminders";
 
     /**
-     * Текст сообщения-меню, когда над кнопками слов быть не должно: один значок. Telegram не принимает сообщение
-     * без текста. Невидимые символы (проверено: U+2800 «Braille Pattern Blank») он тоже считает пустым текстом и при
-     * редактировании сообщения отвечает «text must be non-empty», из-за чего кнопка «В меню» переставала работать.
-     * Обычный видимый значок принимается всегда.
+     * Тонкая линия-разделитель под сообщением меню. Зачем она нужна:
+     * <ul>
+     *   <li>Telegram не принимает сообщение без текста. Невидимые символы (проверено: U+2800 «Braille Pattern Blank»)
+     *       он тоже считает пустым текстом и при редактировании отвечает «text must be non-empty» — кнопка «В меню»
+     *       переставала работать.</li>
+     *   <li>Кнопки под сообщением растягиваются по его ширине. Сообщение из одного значка (пробовали «🏠») узкое, и
+     *       все кнопки получались маленькими. Линия делает сообщение достаточно широким, а сама ничего не говорит.</li>
+     * </ul>
+     * Длину можно подогнать: длиннее линия — шире сообщение и кнопки.
      */
-    static final String MENU_TEXT = "🏠";
+    static final String MENU_LINE = "━".repeat(24);
 
     /** Кнопка возврата в главное меню, которая добавляется под каждый экран. */
     static final ReplyButton MENU_BUTTON = new ReplyButton("🏠 В меню", MENU);
@@ -349,17 +354,24 @@ public class CommandHandler {
      * Главное меню: «Дела на сегодня» длинной кнопкой, остальные четыре по две в ряду. Сам является «домом», поэтому кнопки
      * «🏠 В меню» в нём нет.
      *
-     * @param intro текст над кнопками (HTML); пустая строка — слов нет, остаётся один значок {@link #MENU_TEXT}
-     *              (сообщение без текста Telegram не принимает)
+     * @param intro текст над кнопками (HTML); пустая строка — слов нет, остаётся только линия {@link #MENU_LINE}.
+     *              Если текст короче линии, линия добавляется под ним: иначе сообщение узкое и кнопки мелкие.
      */
     private static BotReply mainMenu(String intro) {
+        String text = intro.isBlank() ? MENU_LINE
+                : visibleLength(intro) < MENU_LINE.length() ? intro + "\n" + MENU_LINE : intro;
         // «Дела на сегодня» — главный пункт: длинная кнопка сверху на весь ряд; остальные четыре одного размера, по две в ряд.
-        return new BotReply(intro.isBlank() ? MENU_TEXT : intro, List.of(
+        return new BotReply(text, List.of(
                 ReplyButton.wide("📋 Дела на сегодня", MENU_TODAY),
                 new ReplyButton("➕ Добавить дело", MENU_ADD),
                 new ReplyButton("🗑 Убрать дело", MENU_REMOVE),
                 new ReplyButton("📊 Неделя", WEEK),
                 new ReplyButton("⏰ Напоминания", MENU_REMINDERS)), 2);
+    }
+
+    /** Длина текста без HTML-тегов: теги не видны, поэтому ширину сообщения не увеличивают. */
+    private static int visibleLength(String html) {
+        return html.replaceAll("<[^>]*>", "").length();
     }
 
     /** Добавляет под экран кнопку «🏠 В меню», чтобы из любого места можно было вернуться. */

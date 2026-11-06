@@ -151,15 +151,40 @@ class CommandHandlerTest {
 
         assertNull(response.notice());
         assertEquals(MENU_ITEMS, response.view().buttons());
-        // над кнопками слов нет, только значок: Telegram отвергает пустой текст и невидимые символы
-        assertEquals(CommandHandler.MENU_TEXT, response.view().text());
-        assertEquals("🏠", response.view().text());
+        // над кнопками слов нет, только тонкая линия: Telegram отвергает пустой текст и невидимые символы,
+        // а узкое сообщение (например, из одного значка) делает все кнопки мелкими
+        assertEquals(CommandHandler.MENU_LINE, response.view().text());
     }
 
     @Test
-    void menuCommandAndStartMenuAlsoUseVisibleIconNotInvisibleCharacter() {
-        assertEquals("🏠", handler.handle(CHAT, "/menu").text());
-        assertTrue(CommandHandlerTest.hasVisibleContent(handler.handle(CHAT, "/menu").text()));
+    void menuTextHasNoWordsNoEmojiAndIsWideEnoughForBigButtons() {
+        for (String text : new String[] {handler.handle(CHAT, "/menu").text(),
+                handler.handleCallback(CHAT, "menu").view().text()}) {
+            assertEquals(CommandHandler.MENU_LINE, text);
+            assertTrue(hasVisibleContent(text), "Telegram должен принять этот текст");
+            assertTrue(text.chars().allMatch(c -> c == '━'), "в тексте только линия, без слов и значков: " + text);
+            // ширина сообщения определяет ширину кнопок: линия не должна быть короче прежнего заголовка меню
+            assertTrue(text.length() >= 20, "слишком узкое сообщение — кнопки станут мелкими: " + text.length());
+        }
+    }
+
+    @Test
+    void shortIntroGetsLineUnderItSoMessageIsNotNarrow() {
+        BotReply unknown = handler.handle(CHAT, "привет");
+
+        assertEquals("🤔 <b>Не понял.</b>\n" + CommandHandler.MENU_LINE, unknown.text());
+        assertEquals(MENU_ITEMS, unknown.buttons());
+    }
+
+    @Test
+    void longIntroDoesNotNeedTheLine() {
+        when(service.register(CHAT)).thenReturn(false, true);
+
+        String existing = handler.handle(CHAT, "/start").text();   // «✅ Регистрация уже пройдена.» — 27 знаков
+        String newcomer = handler.handle(CHAT, "/start").text();   // приветствие — длинное
+
+        assertEquals("✅ Регистрация уже пройдена.", existing);
+        assertTrue(!newcomer.contains("━"), newcomer);
     }
 
     /**
