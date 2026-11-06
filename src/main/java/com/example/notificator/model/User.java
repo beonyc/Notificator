@@ -7,6 +7,8 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -42,6 +44,15 @@ public class User {
 
     @Column(nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
+
+    /**
+     * Дата (по времени пользователя), за которую уже обработан утренний итог.
+     * Нужна, чтобы итог не отправлялся дважды за день, в том числе после перезапуска приложения.
+     */
+    private LocalDate lastSummaryDate;
+
+    /** Начало последнего обработанного слота напоминаний (по времени пользователя), например 13:00 сегодня. */
+    private LocalDateTime lastReminderSlot;
 
     public User(Long telegramChatId) {
         this.telegramChatId = telegramChatId;
