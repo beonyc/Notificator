@@ -94,15 +94,269 @@ class CommandHandlerTest {
         assertTrue(lines.stream().allMatch(l -> l.split("/add", -1).length <= 2), lines.toString());
     }
 
-    @Test
-    void helpListsAddCommandWithoutExampleTitle() {
-        when(service.register(CHAT)).thenReturn(false);
-        String unknown = handler.handle(CHAT, "привет").text();
-        String start = handler.handle(CHAT, "/start").text();
+    // ---------- Главное меню ----------
 
-        for (String text : new String[] {CommandHandler.HELP, unknown, start}) {
-            assertTrue(text.contains("➕ /add — добавить дело"), text);
-            assertFalse(text.contains("/add Читать"), text);
+    /** Кнопка возврата, которая должна быть под каждым экраном. */
+    private static final ReplyButton MENU = new ReplyButton("🏠 В меню", "menu");
+
+    private static final List<ReplyButton> MENU_ITEMS = List.of(
+            new ReplyButton("➕ Добавить дело", "add"),
+            new ReplyButton("📋 Дела на сегодня", "today"),
+            new ReplyButton("🗑 Убрать дело", "remove"),
+            new ReplyButton("📊 Неделя", "week"),
+            new ReplyButton("⏰ Напоминания", "reminders"));
+
+    @Test
+    void startShowsMainMenuAsButtonsTwoPerRow() {
+        when(service.register(CHAT)).thenReturn(true);
+
+        BotReply reply = handler.handle(CHAT, "/start");
+
+        assertEquals(MENU_ITEMS, reply.buttons());
+        assertEquals(2, reply.columns());
+        assertTrue(reply.text().contains("Привет!"), reply.text());
+        assertTrue(reply.text().contains("Главное меню"), reply.text());
+    }
+
+    @Test
+    void startForExistingUserAlsoShowsMenu() {
+        when(service.register(CHAT)).thenReturn(false);
+
+        BotReply reply = handler.handle(CHAT, "/start");
+
+        assertEquals(MENU_ITEMS, reply.buttons());
+        assertTrue(reply.text().contains("Ты уже зарегистрирован"), reply.text());
+    }
+
+    @Test
+    void menuCommandAndUnknownInputShowMenu() {
+        for (String text : new String[] {"/menu", "привет", "/неизвестная", "/MENU@MyBot"}) {
+            BotReply reply = handler.handle(CHAT, text);
+
+            assertEquals(MENU_ITEMS, reply.buttons(), text);
+            assertEquals(2, reply.columns(), text);
+        }
+        assertTrue(handler.handle(CHAT, "привет").text().startsWith("🤔 <b>Не понял.</b>"));
+    }
+
+    @Test
+    void menuHasNoBackToMenuButtonOfItsOwn() {
+        assertFalse(handler.handleCallback(CHAT, "menu").view().buttons().contains(MENU));
+        assertFalse(handler.handle(CHAT, "/menu").buttons().contains(MENU));
+    }
+
+    @Test
+    void menuButtonReturnsMainMenuInSameMessage() {
+        CallbackResponse response = handler.handleCallback(CHAT, "menu");
+
+        assertNull(response.notice());
+        assertEquals(MENU_ITEMS, response.view().buttons());
+        assertTrue(response.view().text().startsWith("🏠 <b>Главное меню</b>"));
+    }
+
+    @Test
+    void menuItemsOpenTheirScreens() {
+        when(service.todayItems(CHAT)).thenReturn(List.of(new TodayItem(1, "Читать", false)));
+        when(service.activeTasks(CHAT)).thenReturn(List.of(new TaskItem(7, "Читать")));
+        when(reminders.get(CHAT)).thenReturn(settings(true, false, LocalTime.of(13, 0)));
+        when(stats.currentWeek(CHAT)).thenReturn(new WeeklyStats(LocalDate.of(2026, 11, 2), LocalDate.of(2026, 11, 5),
+                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Проленился"));
+
+        assertTrue(handler.handleCallback(CHAT, "today").view().text().startsWith("📋 <b>Дела на сегодня</b>"));
+        assertTrue(handler.handleCallback(CHAT, "remove").view().text().startsWith("🗑 <b>Какое дело убрать"));
+        assertTrue(handler.handleCallback(CHAT, "reminders").view().text().startsWith("🔔 <b>Напоминания:</b>"));
+        assertTrue(handler.handleCallback(CHAT, "week").view().text().startsWith("📊 <b>Неделя в процессе</b>"));
+        assertTrue(handler.handleCallback(CHAT, "add").view().text().startsWith("✍️ <b>Напиши название дела</b>"));
+    }
+
+    @Test
+    void everyScreenEndsWithBackToMenuButton() {
+        when(service.todayItems(CHAT)).thenReturn(List.of(
+                new TodayItem(1, "Читать", false), new TodayItem(2, "Зарядка", false)));
+        when(service.activeTasks(CHAT)).thenReturn(List.of(new TaskItem(7, "Читать"), new TaskItem(8, "Зарядка")));
+        when(reminders.get(CHAT)).thenReturn(settings(true, true, LocalTime.of(9, 0)));
+        WeeklyStats weekStats = new WeeklyStats(LocalDate.of(2026, 11, 2), LocalDate.of(2026, 11, 5),
+                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Проленился");
+        when(stats.currentWeek(CHAT)).thenReturn(weekStats);
+        when(stats.weekOverview(CHAT)).thenReturn(new WeekOverview(LocalDate.of(2026, 11, 2),
+                LocalDate.of(2026, 11, 5), List.of(new DayStat(LocalDate.of(2026, 11, 5), 2, 0))));
+        when(stats.dayReport(CHAT, LocalDate.of(2026, 11, 5))).thenReturn(new DayReport(
+                LocalDate.of(2026, 11, 5), DayReport.Status.OK, List.of(new TodayItem(1, "Читать", false)), true, false));
+        when(stats.dayReport(CHAT, LocalDate.of(2026, 11, 4))).thenReturn(new DayReport(
+                LocalDate.of(2026, 11, 4), DayReport.Status.OK, List.of(new TodayItem(1, "Читать", false)), false, true));
+
+        List<BotReply> screens = List.of(
+                handler.handle(CHAT, "/today"), handler.handle(CHAT, "/remove"), handler.handle(CHAT, "/reminders"),
+                handler.handle(CHAT, "/week"), handler.handle(CHAT, "/add"), handler.handle(CHAT, "/add Читать"),
+                handler.handle(CHAT, "/cancel"),
+                handler.handleCallback(CHAT, "days").view(), handler.handleCallback(CHAT, "week").view(),
+                handler.handleCallback(CHAT, "day:2026-11-05").view(), handler.handleCallback(CHAT, "day:2026-11-04").view(),
+                handler.handleCallback(CHAT, "rem:edit").view(), handler.handleCallback(CHAT, "rem:off").view(),
+                handler.handleCallback(CHAT, "rmall").view(), handler.handleCallback(CHAT, "rmall:no").view(),
+                handler.handleCallback(CHAT, "doneall").view(), handler.handleCallback(CHAT, "add").view());
+
+        for (BotReply screen : screens) {
+            assertEquals(MENU, screen.buttons().get(screen.buttons().size() - 1), screen.text());
+        }
+    }
+
+    @Test
+    void errorsInReminderTimeInputAlsoOfferMenu() {
+        when(reminders.get(CHAT)).thenReturn(settings(true, true, LocalTime.of(9, 0)));
+        handler.handleCallback(CHAT, "rem:edit");
+
+        BotReply bad = handler.handle(CHAT, "утром");
+
+        assertEquals(List.of(MENU), bad.buttons());
+    }
+
+    @Test
+    void emptyTodayAndRemoveOfferAddButtonAndMenu() {
+        when(service.todayItems(CHAT)).thenReturn(List.of());
+        when(service.activeTasks(CHAT)).thenReturn(List.of());
+        List<ReplyButton> expected = List.of(new ReplyButton("➕ Добавить дело", "add"), MENU);
+
+        assertEquals(expected, handler.handle(CHAT, "/today").buttons());
+        assertEquals(expected, handler.handle(CHAT, "/remove").buttons());
+    }
+
+    @Test
+    void unregisteredUserGetsNoMenuButtonOnStartPrompt() {
+        when(service.todayItems(CHAT)).thenThrow(new UserNotRegisteredException(CHAT));
+
+        assertTrue(handler.handle(CHAT, "/today").buttons().isEmpty());
+    }
+
+    // ---------- Добавление дела через меню ----------
+
+    @Test
+    void addWithTitleOffersAddMoreAndMenu() {
+        BotReply reply = handler.handle(CHAT, "/add Читать");
+
+        assertEquals(List.of(new ReplyButton("➕ Добавить ещё", "add"), MENU), reply.buttons());
+    }
+
+    @Test
+    void addButtonAsksForTitleThenNextPlainMessageBecomesTask() {
+        CallbackResponse ask = handler.handleCallback(CHAT, "add");
+
+        assertEquals("Жду название", ask.notice());
+        assertEquals(List.of(MENU), ask.view().buttons());
+        verify(service, never()).addTask(anyLong(), anyString());
+
+        BotReply reply = handler.handle(CHAT, "  Читать 30 минут ");
+
+        verify(service).addTask(CHAT, "Читать 30 минут");
+        assertEquals("✅ Добавлено: <b>Читать 30 минут</b>", reply.text());
+        assertEquals(List.of(new ReplyButton("➕ Добавить ещё", "add"), MENU), reply.buttons());
+    }
+
+    @Test
+    void afterTitleIsAddedPlainTextIsNotATaskAnymore() {
+        handler.handleCallback(CHAT, "add");
+        handler.handle(CHAT, "Читать");
+
+        BotReply next = handler.handle(CHAT, "ещё текст");
+
+        verify(service, org.mockito.Mockito.times(1)).addTask(anyLong(), anyString());
+        assertEquals(MENU_ITEMS, next.buttons()); // обычный ввод — снова главное меню
+    }
+
+    @Test
+    void addMoreButtonStartsAnotherRound() {
+        handler.handleCallback(CHAT, "add");
+        handler.handle(CHAT, "Первое");
+        handler.handleCallback(CHAT, "add"); // кнопка «Добавить ещё»
+        handler.handle(CHAT, "Второе");
+
+        verify(service).addTask(CHAT, "Первое");
+        verify(service).addTask(CHAT, "Второе");
+    }
+
+    @Test
+    void tooLongTitleKeepsWaitingForShorterOne() {
+        handler.handleCallback(CHAT, "add");
+
+        BotReply tooLong = handler.handle(CHAT, "я".repeat(CommandHandler.MAX_TITLE_LENGTH + 1));
+
+        assertTrue(tooLong.text().contains("Слишком длинное название"), tooLong.text());
+        assertEquals(List.of(MENU), tooLong.buttons());
+        verify(service, never()).addTask(anyLong(), anyString());
+
+        handler.handle(CHAT, "Короткое");
+        verify(service).addTask(CHAT, "Короткое");
+    }
+
+    @Test
+    void menuButtonCancelsWaitingForTitle() {
+        handler.handleCallback(CHAT, "add");
+        handler.handleCallback(CHAT, "menu");
+
+        handler.handle(CHAT, "Это уже не название");
+
+        verify(service, never()).addTask(anyLong(), anyString());
+    }
+
+    @Test
+    void anyOtherButtonCancelsWaitingForTitle() {
+        when(service.todayItems(CHAT)).thenReturn(List.of());
+        handler.handleCallback(CHAT, "add");
+        handler.handleCallback(CHAT, "today");
+
+        handler.handle(CHAT, "Это уже не название");
+
+        verify(service, never()).addTask(anyLong(), anyString());
+    }
+
+    @Test
+    void commandWhileWaitingForTitleWorksAndCancelsWaiting() {
+        when(service.todayItems(CHAT)).thenReturn(List.of());
+        handler.handleCallback(CHAT, "add");
+
+        BotReply today = handler.handle(CHAT, "/today");
+        handler.handle(CHAT, "Это уже не название");
+
+        assertTrue(today.text().contains("На сегодня дел нет"), today.text());
+        verify(service, never()).addTask(anyLong(), anyString());
+    }
+
+    @Test
+    void cancelCommandStopsWaitingForTitle() {
+        handler.handleCallback(CHAT, "add");
+
+        assertEquals("↩️ Отменено.", handler.handle(CHAT, "/cancel").text());
+        handler.handle(CHAT, "Это уже не название");
+
+        verify(service, never()).addTask(anyLong(), anyString());
+    }
+
+    @Test
+    void waitingForTitleAndForTimesNeverOverlap() {
+        when(reminders.get(CHAT)).thenReturn(settings(true, true, LocalTime.of(9, 0)));
+
+        handler.handleCallback(CHAT, "add");
+        handler.handleCallback(CHAT, "rem:edit"); // перешёл к напоминаниям: теперь ждём время, а не название
+        handler.handle(CHAT, "9:00 18:00");
+
+        verify(service, never()).addTask(anyLong(), anyString());
+        verify(reminders).setTimes(CHAT, List.of(LocalTime.of(9, 0), LocalTime.of(18, 0)));
+    }
+
+    @Test
+    void addButtonFromUnregisteredUserAsksToPressStartAndDoesNotWait() {
+        when(service.activeTasks(CHAT)).thenThrow(new UserNotRegisteredException(CHAT));
+
+        assertEquals("Сначала нажми /start", handler.handleCallback(CHAT, "add").notice());
+        handler.handle(CHAT, "Текст");
+
+        verify(service, never()).addTask(anyLong(), anyString());
+    }
+
+    @Test
+    void helpLinesWithoutExampleTitleAreGone() {
+        // в главном меню нет текстового списка команд с примерами
+        for (BotReply reply : List.of(handler.handle(CHAT, "привет"), handler.handle(CHAT, "/menu"))) {
+            assertFalse(reply.text().contains("/add Читать"), reply.text());
         }
     }
 
@@ -141,7 +395,7 @@ class CommandHandlerTest {
 
                 ▰▰▰▰▰▱▱▱▱▱ 50%
                 Выполнено <b>1</b> из <b>2</b>""", reply.text());
-        assertEquals(List.of(new ReplyButton("✅ 2. Зарядка", "done:11")), reply.buttons());
+        assertEquals(List.of(new ReplyButton("✅ 2. Зарядка", "done:11"), MENU), reply.buttons());
     }
 
     @Test
@@ -150,7 +404,7 @@ class CommandHandlerTest {
 
         BotReply reply = handler.handle(CHAT, "/today");
 
-        assertTrue(reply.buttons().isEmpty());
+        assertEquals(List.of(MENU), reply.buttons());
         assertTrue(reply.text().endsWith("🎉 Все дела выполнены, день закрыт 💪"));
         assertTrue(reply.text().contains("▰▰▰▰▰▰▰▰▰▰ 100%"), reply.text());
     }
@@ -190,7 +444,7 @@ class CommandHandlerTest {
 
     @Test
     void unknownTextShowsHelp() {
-        assertTrue(handler.handle(CHAT, "привет").text().contains("/today"));
+        assertEquals(MENU_ITEMS, handler.handle(CHAT, "привет").buttons()); // непонятный ввод — главное меню
     }
 
     @Test
@@ -203,7 +457,7 @@ class CommandHandlerTest {
         verify(service).markDone(CHAT, 11L);
         assertEquals("Выполнено ✅", response.notice());
         assertTrue(response.view().text().contains("✅ 1. <s>Зарядка</s>"));
-        assertTrue(response.view().buttons().isEmpty());
+        assertEquals(List.of(MENU), response.view().buttons());
     }
 
     @Test
@@ -241,14 +495,14 @@ class CommandHandlerTest {
                 1. Читать
                 2. Зарядка""", reply.text());
         assertEquals(List.of(new ReplyButton("🗑 1. Читать", "rm:7"), new ReplyButton("🗑 2. Зарядка", "rm:8"),
-                new ReplyButton("🗑 Удалить все", "rmall")), reply.buttons());
+                new ReplyButton("🗑 Удалить все", "rmall"), MENU), reply.buttons());
     }
 
     @Test
     void removeAllButtonIsNotShownForSingleTask() {
         when(service.activeTasks(CHAT)).thenReturn(List.of(new TaskItem(7, "Читать")));
 
-        assertEquals(List.of(new ReplyButton("🗑 1. Читать", "rm:7")), handler.handle(CHAT, "/remove").buttons());
+        assertEquals(List.of(new ReplyButton("🗑 1. Читать", "rm:7"), MENU), handler.handle(CHAT, "/remove").buttons());
     }
 
     @Test
@@ -258,8 +512,10 @@ class CommandHandlerTest {
 
         List<ReplyButton> buttons = handler.handle(CHAT, "/today").buttons();
 
-        assertEquals(new ReplyButton("✅ Выполнить все", "doneall"), buttons.get(buttons.size() - 1));
-        assertEquals(3, buttons.size());
+        // две кнопки дел, «Выполнить все» и «В меню» (меню — всегда последняя)
+        assertEquals(new ReplyButton("✅ Выполнить все", "doneall"), buttons.get(buttons.size() - 2));
+        assertEquals(MENU, buttons.get(buttons.size() - 1));
+        assertEquals(4, buttons.size());
     }
 
     @Test
@@ -267,7 +523,7 @@ class CommandHandlerTest {
         when(service.todayItems(CHAT)).thenReturn(List.of(
                 new TodayItem(1, "Читать", false), new TodayItem(2, "Зарядка", true)));
 
-        assertEquals(1, handler.handle(CHAT, "/today").buttons().size());
+        assertEquals(2, handler.handle(CHAT, "/today").buttons().size());
     }
 
     @Test
@@ -279,7 +535,7 @@ class CommandHandlerTest {
 
         verify(service).markAllDone(CHAT);
         assertEquals("Выполнено дел: 3 ✅", response.notice());
-        assertTrue(response.view().buttons().isEmpty());
+        assertEquals(List.of(MENU), response.view().buttons());
     }
 
     @Test
@@ -299,7 +555,7 @@ class CommandHandlerTest {
         verify(service, never()).removeAllTasks(anyLong());
         assertTrue(response.view().text().contains("Удалить все дела (2)?"));
         assertEquals(List.of(new ReplyButton("🗑 Да, удалить все", "rmall:yes"),
-                new ReplyButton("↩️ Отмена", "rmall:no")), response.view().buttons());
+                new ReplyButton("↩️ Отмена", "rmall:no"), MENU), response.view().buttons());
     }
 
     @Test
@@ -332,7 +588,7 @@ class CommandHandlerTest {
         BotReply reply = handler.handle(CHAT, "/remove");
 
         assertTrue(reply.text().contains("Дел для удаления нет"));
-        assertTrue(reply.buttons().isEmpty());
+        assertEquals(List.of(new ReplyButton("➕ Добавить дело", "add"), MENU), reply.buttons());
     }
 
     @Test
@@ -344,7 +600,7 @@ class CommandHandlerTest {
 
         verify(service).removeTask(CHAT, 7L);
         assertEquals("Удалено: Читать", response.notice());
-        assertEquals(List.of(new ReplyButton("🗑 1. Зарядка", "rm:8")), response.view().buttons());
+        assertEquals(List.of(new ReplyButton("🗑 1. Зарядка", "rm:8"), MENU), response.view().buttons());
     }
 
     @Test
@@ -371,7 +627,7 @@ class CommandHandlerTest {
         BotReply reply = handler.handle(CHAT, "/week");
 
         assertTrue(reply.text().startsWith("📊 <b>Неделя в процессе</b> 02.11–07.11"), reply.text());
-        assertEquals(List.of(new ReplyButton("📅 Дела по дням", "days")), reply.buttons());
+        assertEquals(List.of(new ReplyButton("📅 Дела по дням", "days"), MENU), reply.buttons());
     }
 
     // ---------- Дела по дням (доступны только из /week) ----------
@@ -399,9 +655,8 @@ class CommandHandlerTest {
     @Test
     void dayCommandNoLongerExistsPastDaysAreOnlyAvailableFromWeek() {
         for (String text : new String[] {"/day", "/day пн", "/day 5.11"}) {
-            assertTrue(handler.handle(CHAT, text).text().startsWith("🤔 Не понял."), text);
+            assertTrue(handler.handle(CHAT, text).text().startsWith("🤔 <b>Не понял.</b>"), text);
         }
-        assertFalse(CommandHandler.HELP.contains("/day"));
         verify(stats, never()).dayReport(anyLong(), any());
         verify(stats, never()).weekOverview(anyLong());
     }
@@ -419,7 +674,7 @@ class CommandHandlerTest {
                 new ReplyButton("Вт 03.11 · дел нет", "day:2026-11-03"),
                 new ReplyButton("Ср 04.11 (вчера) · 1 из 1", "day:2026-11-04"),
                 new ReplyButton("Чт 05.11 (сегодня) · 0 из 2", "day:2026-11-05"),
-                new ReplyButton("↩️ К отчёту", "week")), response.view().buttons());
+                new ReplyButton("↩️ К отчёту", "week"), MENU), response.view().buttons());
     }
 
     @Test
@@ -431,7 +686,7 @@ class CommandHandlerTest {
 
         assertNull(response.notice());
         assertTrue(response.view().text().startsWith("📊 <b>Неделя в процессе</b> 02.11–05.11"), response.view().text());
-        assertEquals(List.of(new ReplyButton("📅 Дела по дням", "days")), response.view().buttons());
+        assertEquals(List.of(new ReplyButton("📅 Дела по дням", "days"), MENU), response.view().buttons());
     }
 
     @Test
@@ -459,7 +714,7 @@ class CommandHandlerTest {
 
                 ▰▰▰▰▰▰▰▱▱▱ 67%
                 Выполнено <b>2</b> из <b>3</b>""", response.view().text());
-        assertEquals(List.of(new ReplyButton("↩️ К дням недели", "days")), response.view().buttons());
+        assertEquals(List.of(new ReplyButton("↩️ К дням недели", "days"), MENU), response.view().buttons());
     }
 
     @Test
@@ -507,7 +762,7 @@ class CommandHandlerTest {
         assertEquals(List.of(
                 new ReplyButton("↩️ Снять: Читать", "yd:2026-11-04:1:0"),
                 new ReplyButton("✅ Отметить: Зарядка", "yd:2026-11-04:2:1"),
-                new ReplyButton("↩️ К дням недели", "days")), view.buttons());
+                new ReplyButton("↩️ К дням недели", "days"), MENU), view.buttons());
     }
 
     @Test
@@ -526,7 +781,7 @@ class CommandHandlerTest {
         BotReply view = handler.handleCallback(CHAT, "day:2026-11-04").view();
 
         assertTrue(view.text().contains("В этот день дел не было."));
-        assertEquals(List.of(new ReplyButton("↩️ К дням недели", "days")), view.buttons());
+        assertEquals(List.of(new ReplyButton("↩️ К дням недели", "days"), MENU), view.buttons());
     }
 
     @Test
@@ -534,9 +789,9 @@ class CommandHandlerTest {
         givenDay(MON, DayReport.Status.OK, false, new TodayItem(1, "Читать", false));
         givenDay(THU, DayReport.Status.OK, true, new TodayItem(2, "Сон", false));
 
-        assertEquals(List.of(new ReplyButton("↩️ К дням недели", "days")),
+        assertEquals(List.of(new ReplyButton("↩️ К дням недели", "days"), MENU),
                 handler.handleCallback(CHAT, "day:2026-11-02").view().buttons());
-        assertEquals(List.of(new ReplyButton("↩️ К дням недели", "days")),
+        assertEquals(List.of(new ReplyButton("↩️ К дням недели", "days"), MENU),
                 handler.handleCallback(CHAT, "day:2026-11-05").view().buttons());
     }
 
@@ -604,7 +859,7 @@ class CommandHandlerTest {
         assertEquals(List.of(
                 new ReplyButton("Вс 08.11 (вчера) · 1 из 2", "day:2026-11-08"),
                 new ReplyButton("Пн 09.11 (сегодня) · дел нет", "day:2026-11-09"),
-                new ReplyButton("↩️ К отчёту", "week")), buttons);
+                new ReplyButton("↩️ К отчёту", "week"), MENU), buttons);
     }
 
     @Test
@@ -662,7 +917,7 @@ class CommandHandlerTest {
         assertTrue(reply.text().startsWith("🔔 <b>Напоминания:</b> 13:00, 17:00 (по умолчанию)"), reply.text());
         assertTrue(reply.text().contains("Europe/Moscow"));
         assertEquals(List.of(new ReplyButton("✏️ Изменить время", "rem:edit"),
-                new ReplyButton("🔕 Выключить", "rem:off")), reply.buttons());
+                new ReplyButton("🔕 Выключить", "rem:off"), MENU), reply.buttons());
     }
 
     @Test
@@ -674,7 +929,7 @@ class CommandHandlerTest {
         assertTrue(reply.text().startsWith("🔔 <b>Напоминания:</b> 09:30\n"), reply.text());
         assertEquals(List.of(new ReplyButton("✏️ Изменить время", "rem:edit"),
                 new ReplyButton("🔕 Выключить", "rem:off"),
-                new ReplyButton("↩️ По умолчанию", "rem:default")), reply.buttons());
+                new ReplyButton("↩️ По умолчанию", "rem:default"), MENU), reply.buttons());
     }
 
     @Test
@@ -686,7 +941,7 @@ class CommandHandlerTest {
         assertTrue(reply.text().startsWith("🔕 <b>Напоминания выключены.</b>"), reply.text());
         assertTrue(reply.text().contains("Сохранённое время: 13:00"));
         assertEquals(List.of(new ReplyButton("✏️ Изменить время", "rem:edit"),
-                new ReplyButton("🔔 Включить", "rem:on")), reply.buttons());
+                new ReplyButton("🔔 Включить", "rem:on"), MENU), reply.buttons());
     }
 
     @Test
@@ -698,7 +953,7 @@ class CommandHandlerTest {
         assertEquals("Жду время", ask.notice());
         assertTrue(ask.view().text().contains("Отправь время напоминаний</b> одним сообщением"), ask.view().text());
         assertTrue(ask.view().text().contains("Europe/Moscow"));
-        assertEquals(List.of(new ReplyButton("↩️ Отмена", "rem:cancel")), ask.view().buttons());
+        assertEquals(List.of(new ReplyButton("↩️ Отмена", "rem:cancel"), MENU), ask.view().buttons());
 
         BotReply reply = handler.handle(CHAT, "9:00 18:00"); // обычное сообщение без команды
 
@@ -714,7 +969,7 @@ class CommandHandlerTest {
 
         BotReply reply = handler.handle(CHAT, "привет");
 
-        assertTrue(reply.text().startsWith("🤔 Не понял."), reply.text());
+        assertTrue(reply.text().startsWith("🤔 <b>Не понял.</b>"), reply.text());
         verify(reminders, org.mockito.Mockito.times(1)).setTimes(anyLong(), any());
     }
 
@@ -739,13 +994,13 @@ class CommandHandlerTest {
 
         handler.handleCallback(CHAT, "rem:edit");
         assertEquals("↩️ Отменено.", handler.handle(CHAT, "/cancel").text());
-        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("🤔 Не понял."));
+        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("🤔 <b>Не понял.</b>"));
 
         handler.handleCallback(CHAT, "rem:edit");
         CallbackResponse cancelled = handler.handleCallback(CHAT, "rem:cancel");
         assertEquals("Отменено", cancelled.notice());
         assertTrue(cancelled.view().text().contains("Напоминания"));
-        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("🤔 Не понял."));
+        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("🤔 <b>Не понял.</b>"));
 
         assertEquals("🤷 Отменять нечего.", handler.handle(CHAT, "/cancel").text());
         verify(reminders, never()).setTimes(anyLong(), any());
@@ -760,14 +1015,14 @@ class CommandHandlerTest {
         BotReply today = handler.handle(CHAT, "/today");
 
         assertTrue(today.text().contains("На сегодня дел нет"), today.text());
-        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("🤔 Не понял.")); // ожидание сброшено
+        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("🤔 <b>Не понял.</b>")); // ожидание сброшено
     }
 
     @Test
     void plainTextWithoutPressingEditButtonIsNotTreatedAsTimes() {
         BotReply reply = handler.handle(CHAT, "9:00 18:00");
 
-        assertTrue(reply.text().startsWith("🤔 Не понял."), reply.text());
+        assertTrue(reply.text().startsWith("🤔 <b>Не понял.</b>"), reply.text());
         verify(reminders, never()).setTimes(anyLong(), any());
     }
 
@@ -776,7 +1031,7 @@ class CommandHandlerTest {
         when(reminders.get(CHAT)).thenThrow(new UserNotRegisteredException(CHAT));
 
         assertEquals("Сначала нажми /start", handler.handleCallback(CHAT, "rem:edit").notice());
-        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("🤔 Не понял.")); // ожидание не включилось
+        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("🤔 <b>Не понял.</b>")); // ожидание не включилось
     }
 
     @Test
