@@ -34,17 +34,41 @@ class ReportFormatterTest {
         String text = ReportFormatter.format(WeeklyStatsCalculator.calculate(list, MON, SUN, false), true);
 
         assertEquals("""
-                📊 Итоги недели 02.11–08.11
-                Выполнено 5 из 8 (63%)
-                Оценка: 59/100 — Средне
-                С прошлой неделей сравнить нельзя: там нет данных.
+                📊 <b>Итоги недели</b> 02.11–08.11
 
-                Лучший день: понедельник (100%)
-                Худший день: четверг (0%)
+                ▰▰▰▰▰▰▱▱▱▱ 63%
+                Выполнено <b>5</b> из <b>8</b>
 
-                По делам:
+                🏆 Оценка: <b>59/100</b> — 😐 Средне
+                📈 С прошлой неделей сравнить нельзя: там нет данных.
+
+                🥇 Лучший день: понедельник (100%)
+                🥶 Худший день: четверг (0%)
+
+                📝 <b>По делам:</b>
                 • Читать — 3 из 4
                 • Писать — 2 из 4""", text);
+    }
+
+    @Test
+    void taskTitlesAreHtmlEscaped() {
+        List<StatEntry> list = List.of(e(MON, 1, "Сдать <отчёт> & Ко", true));
+
+        String text = ReportFormatter.format(WeeklyStatsCalculator.calculate(list, MON, SUN, false), true);
+
+        assertTrue(text.contains("• Сдать &lt;отчёт&gt; &amp; Ко — 1 из 1"), text);
+        assertFalse(text.contains("<отчёт>"), text);
+    }
+
+    @Test
+    void verdictGetsMatchingEmoji() {
+        String fire = ReportFormatter.format(WeeklyStatsCalculator.calculate(
+                List.of(e(MON, 1, "Д", true)), MON, SUN, false), true);
+        String lazy = ReportFormatter.format(WeeklyStatsCalculator.calculate(
+                List.of(e(MON, 1, "Д", false)), MON, SUN, false), true);
+
+        assertTrue(fire.contains("— 🔥 Огонь"), fire);
+        assertTrue(lazy.contains("— 😴 Проленился"), lazy);
     }
 
     @Test
@@ -102,13 +126,14 @@ class ReportFormatterTest {
         String text = ReportFormatter.format(
                 WeeklyStatsCalculator.calculate(list, MON, MON.plusDays(2), true), false);
 
-        assertTrue(text.startsWith("📊 Неделя в процессе 02.11–04.11"), text);
+        assertTrue(text.startsWith("📊 <b>Неделя в процессе</b> 02.11–04.11"), text);
     }
 
     @Test
     void emptyPeriodSuggestsAddingTasks() {
         String text = ReportFormatter.format(WeeklyStatsCalculator.calculate(List.of(), MON, SUN, false), true);
 
-        assertEquals("📊 Итоги недели 02.11–08.11\nЗа этот период дел не было. Добавь: /add Читать 30 минут", text);
+        assertEquals("📊 <b>Итоги недели</b> 02.11–08.11\n\n📭 За этот период дел не было.\n"
+                + "Добавь: /add Читать 30 минут", text);
     }
 }

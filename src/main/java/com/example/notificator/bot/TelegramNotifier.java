@@ -25,7 +25,8 @@ public class TelegramNotifier implements Notifier {
     @Override
     public boolean send(long chatId, String text) {
         try {
-            telegramClient.execute(SendMessage.builder().chatId(chatId).text(text).build());
+            // Тексты уведомлений содержат HTML-разметку (жирный, курсив), поэтому parse_mode = HTML.
+            telegramClient.execute(SendMessage.builder().chatId(chatId).text(text).parseMode("HTML").build());
             return true;
         } catch (TelegramApiException e) {
             log.error("Не удалось отправить уведомление в чат {}", chatId, e);

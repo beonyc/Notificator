@@ -39,6 +39,16 @@ class BotMenuInitializerTest {
     }
 
     @Test
+    void menuDescriptionsAreShortAndHaveNoExamples() {
+        BotCommand add = BotMenuInitializer.COMMANDS.stream()
+                .filter(c -> c.getCommand().equals("add")).findFirst().orElseThrow();
+
+        assertEquals("Добавить дело", add.getDescription());
+        // в меню нет примеров с командами: нажатие на пункт отправляет команду без текста
+        assertTrue(BotMenuInitializer.COMMANDS.stream().noneMatch(c -> c.getDescription().contains("/")));
+    }
+
+    @Test
     void everyMenuCommandIsKnownToHandler() {
         // Защита от рассинхрона: команда из меню не должна попадать в ответ «Не понял».
         ReminderSettingsService reminderSettings = mock(ReminderSettingsService.class);
@@ -50,7 +60,7 @@ class BotMenuInitializerTest {
         CommandHandler handler = new CommandHandler(mock(TrackerService.class), reminderSettings, stats);
         for (BotCommand command : BotMenuInitializer.COMMANDS) {
             String text = handler.handle(1L, "/" + command.getCommand()).text();
-            assertTrue(!text.startsWith("Не понял"), "Команда /" + command.getCommand() + " не обрабатывается");
+            assertTrue(!text.startsWith("🤔 Не понял"), "Команда /" + command.getCommand() + " не обрабатывается");
         }
     }
 

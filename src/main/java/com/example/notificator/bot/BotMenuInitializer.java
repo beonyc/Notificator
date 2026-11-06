@@ -32,7 +32,7 @@ public class BotMenuInitializer {
      */
     static final List<BotCommand> COMMANDS = List.of(
             new BotCommand("today", "Дела на сегодня"),
-            new BotCommand("add", "Добавить дело: /add Читать 30 минут"),
+            new BotCommand("add", "Добавить дело"),
             new BotCommand("remove", "Убрать дело из списка"),
             new BotCommand("week", "Статистика за неделю, оценка, дела по дням"),
             new BotCommand("reminders", "Время напоминаний и их отключение"),

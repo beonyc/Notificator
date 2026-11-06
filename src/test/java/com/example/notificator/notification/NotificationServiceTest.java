@@ -80,7 +80,7 @@ class NotificationServiceTest {
         assertEquals(NotificationKind.SUMMARY, n.kind());
         assertEquals(CHAT, n.chatId());
         assertEquals(LocalDateTime.of(2026, 11, 7, 8, 0), n.slot());
-        assertTrue(n.text().startsWith("Вчера выполнено 1 из 2 (50%)."), n.text());
+        assertTrue(n.text().contains("Вчера выполнено 1 из 2 (50%)."), n.text());
         assertTrue(n.text().contains("Не доделано: 1. Сегодня без отговорок."), n.text());
         assertTrue(n.text().contains("Сегодня в списке: 2 дела."), n.text());
         assertEquals(2, tracker.todayItems(CHAT).size()); // отметки на новый день созданы
@@ -93,7 +93,7 @@ class NotificationServiceTest {
 
         String text = service.prepare(userId).orElseThrow().text();
 
-        assertTrue(text.startsWith("Вчера выполнено 3 из 3 (100%)."), text);
+        assertTrue(text.contains("Вчера выполнено 3 из 3 (100%)."), text);
         assertTrue(text.contains("Красава, день закрыт полностью."), text);
     }
 
@@ -102,7 +102,7 @@ class NotificationServiceTest {
         tasksDoneYesterday(3, 2);
         clock.set(MSK_0800);
 
-        assertTrue(service.prepare(userId).orElseThrow().text().startsWith("Вчера выполнено 2 из 3 (67%)."));
+        assertTrue(service.prepare(userId).orElseThrow().text().contains("Вчера выполнено 2 из 3 (67%)."));
     }
 
     @Test
@@ -182,11 +182,36 @@ class NotificationServiceTest {
 
         assertEquals(NotificationKind.REMINDER, n.kind());
         assertEquals(LocalDateTime.of(2026, 11, 7, 13, 0), n.slot());
-        assertTrue(n.text().startsWith("Ты ещё не сделал 2 из 3. Вставай и делай."), n.text());
+        assertTrue(n.text().contains("Ты ещё не сделал 2 из 3. Вставай и делай."), n.text());
         assertTrue(n.text().contains("⬜ Б"), n.text());
         assertTrue(n.text().contains("⬜ В"), n.text());
         assertFalse(n.text().contains("⬜ А"), n.text());
-        assertTrue(n.text().contains("«Вставай и делай» — Марк Аврелий"), n.text());
+        assertTrue(n.text().contains("💬 <i>«Вставай и делай»</i> — Марк Аврелий"), n.text());
+    }
+
+    @Test
+    void reminderHasHeaderAndEscapesTaskTitlesAndQuote() {
+        quotes.save(new Quote("Если a < b & c", "Автор <X>"));
+        clock.set(MSK_1200);
+        tracker.addTask(CHAT, "Сдать <отчёт> & Ко");
+        clock.set(MSK_1300);
+
+        String text = service.prepare(userId).orElseThrow().text();
+
+        assertTrue(text.startsWith("⏰ <b>Время действовать!</b>\n"), text);
+        assertTrue(text.contains("⬜ Сдать &lt;отчёт&gt; &amp; Ко"), text);
+        assertTrue(text.contains("💬 <i>«Если a &lt; b &amp; c»</i> — Автор &lt;X&gt;"), text);
+        assertFalse(text.contains("<отчёт>"), text);
+    }
+
+    @Test
+    void summaryHasGreetingAndProgressBar() {
+        tasksDoneYesterday(2, 1);
+        clock.set(MSK_0800);
+
+        String text = service.prepare(userId).orElseThrow().text();
+
+        assertTrue(text.startsWith("🌅 <b>Доброе утро!</b>\n\n▰▰▰▰▰▱▱▱▱▱ 50%\n"), text);
     }
 
     @Test
@@ -401,8 +426,8 @@ class NotificationServiceTest {
 
         assertEquals(NotificationKind.WEEKLY_REPORT, n.kind());
         assertEquals(LocalDateTime.of(2026, 11, 9, 0, 5), n.slot());
-        assertTrue(n.text().startsWith("📊 Итоги недели 02.11–08.11"), n.text());
-        assertTrue(n.text().contains("Выполнено 1 из 2 (50%)"), n.text());
+        assertTrue(n.text().startsWith("📊 <b>Итоги недели</b> 02.11–08.11"), n.text());
+        assertTrue(n.text().contains("Выполнено <b>1</b> из <b>2</b>"), n.text());
         assertTrue(n.text().contains("• Читать — 1 из 1"), n.text());
     }
 
