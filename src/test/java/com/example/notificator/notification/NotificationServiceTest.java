@@ -14,6 +14,7 @@ import com.example.notificator.service.ReminderSettingsService;
 import com.example.notificator.service.TodayItem;
 import com.example.notificator.service.TrackerService;
 import com.example.notificator.stats.StatsService;
+import com.example.notificator.support.GenderCheck;
 import com.example.notificator.support.MutableClock;
 import com.example.notificator.support.NotificationTestConfig;
 import java.time.LocalDateTime;
@@ -94,7 +95,7 @@ class NotificationServiceTest {
         String text = service.prepare(userId).orElseThrow().text();
 
         assertTrue(text.contains("Вчера выполнено 3 из 3 (100%)."), text);
-        assertTrue(text.contains("Красава, день закрыт полностью."), text);
+        assertTrue(text.contains("Так держать — день закрыт полностью."), text);
     }
 
     @Test
@@ -182,7 +183,7 @@ class NotificationServiceTest {
 
         assertEquals(NotificationKind.REMINDER, n.kind());
         assertEquals(LocalDateTime.of(2026, 11, 7, 13, 0), n.slot());
-        assertTrue(n.text().contains("Ты ещё не сделал 2 из 3. Вставай и делай."), n.text());
+        assertTrue(n.text().contains("Осталось сделать 2 из 3. Вставай и делай."), n.text());
         assertTrue(n.text().contains("⬜ Б"), n.text());
         assertTrue(n.text().contains("⬜ В"), n.text());
         assertFalse(n.text().contains("⬜ А"), n.text());
@@ -212,6 +213,39 @@ class NotificationServiceTest {
         String text = service.prepare(userId).orElseThrow().text();
 
         assertTrue(text.startsWith("🌅 <b>Доброе утро!</b>\n\n▰▰▰▰▰▱▱▱▱▱ 50%\n"), text);
+    }
+
+    @Test
+    void allNotificationTextsAreGenderNeutral() {
+        quotes.save(new Quote("Вставай и делай", "Марк Аврелий"));
+        tasksDoneYesterday(3, 1);              // вчера не всё сделано: в итоге есть подсказка про исправление
+        clock.set(MSK_0800);
+        PendingNotification imperfect = service.prepare(userId).orElseThrow();
+        service.markHandled(imperfect.userId(), imperfect.kind(), imperfect.slot());
+
+        threeTasksOneDone();
+        clock.set(MSK_1300);
+        PendingNotification reminder = service.prepare(userId).orElseThrow();
+
+        tracker.markAllDone(CHAT);
+        entryOnDay("Читать", "2026-11-03T09:00:00Z", true);
+        clock.set(MON_0005);
+        PendingNotification weekly = service.prepare(userId).orElseThrow();
+
+        for (PendingNotification n : List.of(imperfect, reminder, weekly)) {
+            GenderCheck.assertNeutral(n.kind().name(), n.text());
+        }
+    }
+
+    @Test
+    void perfectDaySummaryIsGenderNeutral() {
+        tasksDoneYesterday(2, 2);
+        clock.set(MSK_0800);
+
+        String text = service.prepare(userId).orElseThrow().text();
+
+        assertTrue(text.contains("Так держать — день закрыт полностью."), text);
+        GenderCheck.assertNeutral("итог дня", text);
     }
 
     @Test
@@ -258,7 +292,7 @@ class NotificationServiceTest {
         clock.set(MSK_1700);
         PendingNotification second = service.prepare(userId).orElseThrow();
         assertEquals(LocalDateTime.of(2026, 11, 7, 17, 0), second.slot());
-        assertTrue(second.text().contains("Ты ещё не сделал 2 из 3"));
+        assertTrue(second.text().contains("Осталось сделать 2 из 3"));
     }
 
     @Test
@@ -300,7 +334,7 @@ class NotificationServiceTest {
         clock.set("2026-11-07T12:00:00Z"); // 15:00 МСК — своё время
         PendingNotification n = service.prepare(userId).orElseThrow();
         assertEquals(LocalDateTime.of(2026, 11, 7, 15, 0), n.slot());
-        assertTrue(n.text().contains("Ты ещё не сделал 1 из 1"), n.text());
+        assertTrue(n.text().contains("Осталось сделать 1 из 1"), n.text());
     }
 
     @Test

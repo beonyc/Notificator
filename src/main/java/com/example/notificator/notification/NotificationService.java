@@ -165,9 +165,9 @@ public class NotificationService {
             sb.append("Вчера выполнено ").append(done).append(" из ").append(total)
                     .append(" (").append(percent).append("%).\n");
             sb.append(done == total
-                    ? "🎉 Красава, день закрыт полностью."
+                    ? "🎉 Так держать — день закрыт полностью."
                     : "Не доделано: " + (total - done) + ". Сегодня без отговорок.\n"
-                            + "💡 Выполнил, но не успел отметить? Исправь: /week → «Дела по дням» → вчера.");
+                            + "💡 Нужно поправить вчерашние отметки? Открой: /week → «Дела по дням» → вчера.");
         }
         if (!todayItems.isEmpty()) {
             if (!sb.isEmpty()) {
@@ -192,7 +192,7 @@ public class NotificationService {
             return null;
         }
 
-        StringBuilder sb = new StringBuilder("⏰ <b>Время действовать!</b>\nТы ещё не сделал ")
+        StringBuilder sb = new StringBuilder("⏰ <b>Время действовать!</b>\nОсталось сделать ")
                 .append(notDone.size()).append(" из ").append(items.size()).append(". Вставай и делай.\n\n");
         notDone.stream().limit(MAX_LISTED_TASKS)
                 .forEach(i -> sb.append("⬜ ").append(Html.escape(i.title())).append('\n'));

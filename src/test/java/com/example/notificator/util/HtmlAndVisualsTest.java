@@ -61,6 +61,6 @@ class HtmlAndVisualsTest {
         assertEquals("🔥", Visuals.verdictEmoji("Огонь"));
         assertEquals("👍", Visuals.verdictEmoji("Хорошо"));
         assertEquals("😐", Visuals.verdictEmoji("Средне"));
-        assertEquals("😴", Visuals.verdictEmoji("Проленился"));
+        assertEquals("😴", Visuals.verdictEmoji("Лень победила"));
     }
 }

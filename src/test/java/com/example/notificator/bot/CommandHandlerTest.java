@@ -61,7 +61,7 @@ class CommandHandlerTest {
     void startForExistingUserSaysAlreadyRegistered() {
         when(service.register(CHAT)).thenReturn(false);
 
-        assertTrue(handler.handle(CHAT, "/start").text().contains("Ты уже зарегистрирован"));
+        assertTrue(handler.handle(CHAT, "/start").text().contains("Регистрация уже пройдена"));
     }
 
     @Test
@@ -115,7 +115,7 @@ class CommandHandlerTest {
         assertEquals(MENU_ITEMS, reply.buttons());
         assertEquals(2, reply.columns());
         assertTrue(reply.text().contains("Привет!"), reply.text());
-        assertTrue(reply.text().contains("Главное меню"), reply.text());
+        assertFalse(reply.text().contains("Главное меню"), reply.text()); // слов «Главное меню» над кнопками нет
     }
 
     @Test
@@ -125,7 +125,7 @@ class CommandHandlerTest {
         BotReply reply = handler.handle(CHAT, "/start");
 
         assertEquals(MENU_ITEMS, reply.buttons());
-        assertTrue(reply.text().contains("Ты уже зарегистрирован"), reply.text());
+        assertTrue(reply.text().contains("Регистрация уже пройдена"), reply.text());
     }
 
     @Test
@@ -151,7 +151,9 @@ class CommandHandlerTest {
 
         assertNull(response.notice());
         assertEquals(MENU_ITEMS, response.view().buttons());
-        assertTrue(response.view().text().startsWith("🏠 <b>Главное меню</b>"));
+        assertEquals(CommandHandler.EMPTY_TEXT, response.view().text()); // над кнопками слов нет
+        assertEquals("⠀", response.view().text()); // невидимый символ: Telegram не принимает пустой текст
+        assertTrue(response.view().text().isBlank() == false, "текст не должен считаться пробелами, иначе Telegram его отвергнет");
     }
 
     @Test
@@ -160,7 +162,7 @@ class CommandHandlerTest {
         when(service.activeTasks(CHAT)).thenReturn(List.of(new TaskItem(7, "Читать")));
         when(reminders.get(CHAT)).thenReturn(settings(true, false, LocalTime.of(13, 0)));
         when(stats.currentWeek(CHAT)).thenReturn(new WeeklyStats(LocalDate.of(2026, 11, 2), LocalDate.of(2026, 11, 5),
-                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Проленился"));
+                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Лень победила"));
 
         assertTrue(handler.handleCallback(CHAT, "today").view().text().startsWith("📋 <b>Дела на сегодня</b>"));
         assertTrue(handler.handleCallback(CHAT, "remove").view().text().startsWith("🗑 <b>Какое дело убрать"));
@@ -176,7 +178,7 @@ class CommandHandlerTest {
         when(service.activeTasks(CHAT)).thenReturn(List.of(new TaskItem(7, "Читать"), new TaskItem(8, "Зарядка")));
         when(reminders.get(CHAT)).thenReturn(settings(true, true, LocalTime.of(9, 0)));
         WeeklyStats weekStats = new WeeklyStats(LocalDate.of(2026, 11, 2), LocalDate.of(2026, 11, 5),
-                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Проленился");
+                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Лень победила");
         when(stats.currentWeek(CHAT)).thenReturn(weekStats);
         when(stats.weekOverview(CHAT)).thenReturn(new WeekOverview(LocalDate.of(2026, 11, 2),
                 LocalDate.of(2026, 11, 5), List.of(new DayStat(LocalDate.of(2026, 11, 5), 2, 0))));
@@ -622,7 +624,7 @@ class CommandHandlerTest {
     @Test
     void weekShowsCurrentWeekStatistics() {
         when(stats.currentWeek(CHAT)).thenReturn(new WeeklyStats(LocalDate.of(2026, 11, 2), LocalDate.of(2026, 11, 7),
-                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Проленился"));
+                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Лень победила"));
 
         BotReply reply = handler.handle(CHAT, "/week");
 
@@ -680,7 +682,7 @@ class CommandHandlerTest {
     @Test
     void backToReportButtonReturnsWeekReportWithDaysButton() {
         when(stats.currentWeek(CHAT)).thenReturn(new WeeklyStats(LocalDate.of(2026, 11, 2), LocalDate.of(2026, 11, 5),
-                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Проленился"));
+                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Лень победила"));
 
         CallbackResponse response = handler.handleCallback(CHAT, "week");
 
@@ -692,7 +694,7 @@ class CommandHandlerTest {
     @Test
     void weekReportFromCommandAndFromBackButtonAreTheSame() {
         when(stats.currentWeek(CHAT)).thenReturn(new WeeklyStats(LocalDate.of(2026, 11, 2), LocalDate.of(2026, 11, 5),
-                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Проленился"));
+                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Лень победила"));
 
         assertEquals(handler.handle(CHAT, "/week"), handler.handleCallback(CHAT, "week").view());
     }
@@ -758,7 +760,7 @@ class CommandHandlerTest {
                 ▰▰▰▰▰▱▱▱▱▱ 50%
                 Выполнено <b>1</b> из <b>2</b>
 
-                💡 Не успел вчера? Нажми на дело ниже, чтобы изменить его статус.""", view.text());
+                💡 Вчерашний день ещё можно исправить: нажми на дело ниже, чтобы изменить его статус.""", view.text());
         assertEquals(List.of(
                 new ReplyButton("↩️ Снять: Читать", "yd:2026-11-04:1:0"),
                 new ReplyButton("✅ Отметить: Зарядка", "yd:2026-11-04:2:1"),

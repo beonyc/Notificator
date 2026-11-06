@@ -56,7 +56,7 @@ class BotMenuInitializerTest {
                 new ReminderSettings(true, List.of(LocalTime.of(13, 0)), false, "Europe/Moscow"));
         StatsService stats = mock(StatsService.class);
         when(stats.currentWeek(1L)).thenReturn(new WeeklyStats(LocalDate.of(2026, 11, 2), LocalDate.of(2026, 11, 7),
-                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Проленился"));
+                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Лень победила"));
         CommandHandler handler = new CommandHandler(mock(TrackerService.class), reminderSettings, stats);
         for (BotCommand command : BotMenuInitializer.COMMANDS) {
             String text = handler.handle(1L, "/" + command.getCommand()).text();
