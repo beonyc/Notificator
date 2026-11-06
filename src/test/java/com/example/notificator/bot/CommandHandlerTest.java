@@ -12,6 +12,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.example.notificator.service.EditResult;
 import com.example.notificator.service.MarkResult;
 import com.example.notificator.stats.DayReport;
 import com.example.notificator.stats.DayStat;
@@ -334,7 +335,13 @@ class CommandHandlerTest {
     }
 
     private void givenDay(LocalDate date, DayReport.Status status, boolean today, TodayItem... items) {
-        when(stats.dayReport(CHAT, date)).thenReturn(new DayReport(date, status, List.of(items), today));
+        when(stats.dayReport(CHAT, date)).thenReturn(new DayReport(date, status, List.of(items), today, false));
+    }
+
+    /** Вчерашний день: его статусы можно исправлять. */
+    private void givenEditableDay(LocalDate date, TodayItem... items) {
+        when(stats.dayReport(CHAT, date)).thenReturn(
+                new DayReport(date, DayReport.Status.OK, List.of(items), false, true));
     }
 
     @Test
@@ -358,7 +365,7 @@ class CommandHandlerTest {
         assertEquals(List.of(
                 new ReplyButton("Пн 02.11 · 2 из 3", "day:2026-11-02"),
                 new ReplyButton("Вт 03.11 · дел нет", "day:2026-11-03"),
-                new ReplyButton("Ср 04.11 · 1 из 1", "day:2026-11-04"),
+                new ReplyButton("Ср 04.11 (вчера) · 1 из 1", "day:2026-11-04"),
                 new ReplyButton("Чт 05.11 (сегодня) · 0 из 2", "day:2026-11-05"),
                 new ReplyButton("↩️ К отчёту", "week")), response.view().buttons());
     }
@@ -421,6 +428,128 @@ class CommandHandlerTest {
         String text = handler.handleCallback(CHAT, "day:2026-11-03").view().text();
 
         assertEquals("📅 Вторник, 03.11\n\nВ этот день дел не было.", text);
+    }
+
+    // ---------- Исправление статусов за вчера ----------
+
+    private static final LocalDate WED = LocalDate.of(2026, 11, 4); // «вчера» при сегодня = четверг 5.11
+
+    @Test
+    void yesterdayViewOffersToggleButtonPerTaskAndExplainsWhy() {
+        givenEditableDay(WED, new TodayItem(1, "Читать", true), new TodayItem(2, "Зарядка", false));
+
+        BotReply view = handler.handleCallback(CHAT, "day:2026-11-04").view();
+
+        assertEquals("""
+                📅 Среда, 04.11 (вчера)
+
+                ✅ Читать
+                ❌ Зарядка
+
+                Выполнено 1 из 2 (50%)
+
+                Не успел вчера? Нажми на дело ниже, чтобы изменить его статус.""", view.text());
+        assertEquals(List.of(
+                new ReplyButton("↩️ Снять: Читать", "yd:2026-11-04:1:0"),
+                new ReplyButton("✅ Отметить: Зарядка", "yd:2026-11-04:2:1"),
+                new ReplyButton("↩️ К дням недели", "days")), view.buttons());
+    }
+
+    @Test
+    void yesterdayButtonTitlesAreShortened() {
+        givenEditableDay(WED, new TodayItem(1, "я".repeat(100), false));
+
+        String title = handler.handleCallback(CHAT, "day:2026-11-04").view().buttons().get(0).text();
+
+        assertEquals("✅ Отметить: " + "я".repeat(29) + "…", title);
+    }
+
+    @Test
+    void yesterdayWithoutTasksHasNoEditButtons() {
+        givenEditableDay(WED);
+
+        BotReply view = handler.handleCallback(CHAT, "day:2026-11-04").view();
+
+        assertTrue(view.text().contains("В этот день дел не было."));
+        assertEquals(List.of(new ReplyButton("↩️ К дням недели", "days")), view.buttons());
+    }
+
+    @Test
+    void olderDaysAndTodayHaveNoEditButtons() {
+        givenDay(MON, DayReport.Status.OK, false, new TodayItem(1, "Читать", false));
+        givenDay(THU, DayReport.Status.OK, true, new TodayItem(2, "Сон", false));
+
+        assertEquals(List.of(new ReplyButton("↩️ К дням недели", "days")),
+                handler.handleCallback(CHAT, "day:2026-11-02").view().buttons());
+        assertEquals(List.of(new ReplyButton("↩️ К дням недели", "days")),
+                handler.handleCallback(CHAT, "day:2026-11-05").view().buttons());
+    }
+
+    @Test
+    void editButtonMarksYesterdayTaskDoneAndRefreshesView() {
+        when(service.setYesterdayDone(CHAT, 2L, true)).thenReturn(EditResult.MARKED_DONE);
+        givenEditableDay(WED, new TodayItem(1, "Читать", true), new TodayItem(2, "Зарядка", true));
+
+        CallbackResponse response = handler.handleCallback(CHAT, "yd:2026-11-04:2:1");
+
+        verify(service).setYesterdayDone(CHAT, 2L, true);
+        assertEquals("Отмечено ✅", response.notice());
+        assertTrue(response.view().text().contains("Выполнено 2 из 2 (100%)"), response.view().text());
+    }
+
+    @Test
+    void editButtonCanUndoMistakenMark() {
+        when(service.setYesterdayDone(CHAT, 1L, false)).thenReturn(EditResult.MARKED_UNDONE);
+        givenEditableDay(WED, new TodayItem(1, "Читать", false));
+
+        CallbackResponse response = handler.handleCallback(CHAT, "yd:2026-11-04:1:0");
+
+        verify(service).setYesterdayDone(CHAT, 1L, false);
+        assertEquals("Отметка снята", response.notice());
+    }
+
+    @Test
+    void editButtonNoticeDependsOnResult() {
+        givenEditableDay(WED);
+        when(service.setYesterdayDone(CHAT, 1L, true)).thenReturn(EditResult.UNCHANGED);
+        when(service.setYesterdayDone(CHAT, 2L, true)).thenReturn(EditResult.NOT_EDITABLE);
+        when(service.setYesterdayDone(CHAT, 3L, true)).thenReturn(EditResult.NOT_FOUND);
+
+        assertEquals("Статус уже такой", handler.handleCallback(CHAT, "yd:2026-11-04:1:1").notice());
+        assertEquals("Исправлять можно только вчерашний день", handler.handleCallback(CHAT, "yd:2026-11-04:2:1").notice());
+        assertEquals("Дело не найдено", handler.handleCallback(CHAT, "yd:2026-11-04:3:1").notice());
+    }
+
+    @Test
+    void editButtonWithGarbageDataIsIgnoredWithoutTouchingService() {
+        for (String data : new String[] {"yd:", "yd:2026-11-04:2", "yd:x:2:1", "yd:2026-11-04:abc:1",
+                "yd:2026-11-04:2:2", "yd:2026-11-04:2:1:extra", "yd:2026-13-45:2:1"}) {
+            assertEquals("Неизвестное действие", handler.handleCallback(CHAT, data).notice(), data);
+        }
+        verify(service, never()).setYesterdayDone(anyLong(), anyLong(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    void yesterdayEditFromUnregisteredUserAsksToPressStart() {
+        when(service.setYesterdayDone(anyLong(), anyLong(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenThrow(new UserNotRegisteredException(CHAT));
+
+        assertEquals("Сначала нажми /start", handler.handleCallback(CHAT, "yd:2026-11-04:1:1").notice());
+    }
+
+    @Test
+    void pickerOnMondayShowsYesterdaySundayFirst() {
+        LocalDate sunday = LocalDate.of(2026, 11, 8);
+        LocalDate monday = LocalDate.of(2026, 11, 9);
+        when(stats.weekOverview(CHAT)).thenReturn(new WeekOverview(monday, monday,
+                List.of(new DayStat(sunday, 2, 1), new DayStat(monday, 0, 0))));
+
+        List<ReplyButton> buttons = handler.handleCallback(CHAT, "days").view().buttons();
+
+        assertEquals(List.of(
+                new ReplyButton("Вс 08.11 (вчера) · 1 из 2", "day:2026-11-08"),
+                new ReplyButton("Пн 09.11 (сегодня) · дел нет", "day:2026-11-09"),
+                new ReplyButton("↩️ К отчёту", "week")), buttons);
     }
 
     @Test

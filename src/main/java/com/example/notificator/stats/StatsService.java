@@ -71,18 +71,20 @@ public class StatsService {
         LocalDate today = today(user);
         LocalDate monday = mondayOf(today);
 
+        // В понедельник вчерашний день — это воскресенье прошлой недели. Его тоже показываем в списке,
+        // иначе дела за вчера нельзя было бы исправить (см. dayReport).
+        LocalDate first = today.isAfter(monday) ? monday : today.minusDays(1);
+
         List<TodayItem> todayItems = tracker.todayItems(chatId);
         Map<LocalDate, DayStat> past = new HashMap<>();
-        if (today.isAfter(monday)) {
-            Map<LocalDate, List<TaskEntry>> byDate = entries
-                    .findByTaskUserAndDateBetween(user, monday, today.minusDays(1)).stream()
-                    .collect(Collectors.groupingBy(TaskEntry::getDate));
-            byDate.forEach((date, list) -> past.put(date,
-                    new DayStat(date, list.size(), (int) list.stream().filter(TaskEntry::isDone).count())));
-        }
+        Map<LocalDate, List<TaskEntry>> byDate = entries
+                .findByTaskUserAndDateBetween(user, first, today.minusDays(1)).stream()
+                .collect(Collectors.groupingBy(TaskEntry::getDate));
+        byDate.forEach((date, list) -> past.put(date,
+                new DayStat(date, list.size(), (int) list.stream().filter(TaskEntry::isDone).count())));
 
         List<DayStat> days = new ArrayList<>();
-        for (LocalDate d = monday; !d.isAfter(today); d = d.plusDays(1)) {
+        for (LocalDate d = first; !d.isAfter(today); d = d.plusDays(1)) {
             if (d.equals(today)) {
                 days.add(new DayStat(d, todayItems.size(), (int) todayItems.stream().filter(TodayItem::done).count()));
             } else {
@@ -96,30 +98,34 @@ public class StatsService {
      * Список дел и их статус за один день текущей недели.
      *
      * Дату присылает клиент (она зашита в кнопке и может быть подделана), поэтому проверяем границы:
-     * только текущая неделя (пн–вс) и не позже сегодняшнего дня. Для сегодняшнего дня используется тот же
-     * список, что и в /today (создаёт недостающие отметки, не показывает удалённые дела);
-     * для прошлых дней — сохранённые отметки, включая выполненные дела, которые потом удалили.
+     * текущая неделя (пн–вс), не позже сегодняшнего дня, плюс вчерашний день даже если он в прошлой неделе
+     * (в понедельник это воскресенье — иначе его статус нельзя было бы исправить).
+     * Для сегодняшнего дня используется тот же список, что и в /today (создаёт недостающие отметки,
+     * не показывает удалённые дела); для прошлых дней — сохранённые отметки, включая выполненные дела,
+     * которые потом удалили. Вчерашний день помечается как доступный для исправления статусов.
      */
     @Transactional
     public DayReport dayReport(long chatId, LocalDate date) {
         User user = findUser(chatId);
         LocalDate today = today(user);
         LocalDate monday = mondayOf(today);
+        LocalDate yesterday = today.minusDays(1);
 
-        if (date.isBefore(monday) || date.isAfter(monday.plusDays(6))) {
-            return new DayReport(date, DayReport.Status.OUT_OF_WEEK, List.of(), false);
+        boolean inCurrentWeek = !date.isBefore(monday) && !date.isAfter(monday.plusDays(6));
+        if (!inCurrentWeek && !date.equals(yesterday)) {
+            return new DayReport(date, DayReport.Status.OUT_OF_WEEK, List.of(), false, false);
         }
         if (date.isAfter(today)) {
-            return new DayReport(date, DayReport.Status.FUTURE, List.of(), false);
+            return new DayReport(date, DayReport.Status.FUTURE, List.of(), false, false);
         }
         if (date.equals(today)) {
-            return new DayReport(date, DayReport.Status.OK, tracker.todayItems(chatId), true);
+            return new DayReport(date, DayReport.Status.OK, tracker.todayItems(chatId), true, false);
         }
         List<TodayItem> items = entries.findByTaskUserAndDate(user, date).stream()
                 .sorted(Comparator.comparing(TaskEntry::getId))
                 .map(e -> new TodayItem(e.getId(), e.getTask().getTitle(), e.isDone()))
                 .toList();
-        return new DayReport(date, DayReport.Status.OK, items, false);
+        return new DayReport(date, DayReport.Status.OK, items, false, date.equals(yesterday));
     }
 
     /**

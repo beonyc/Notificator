@@ -58,4 +58,10 @@ public class TaskEntry {
         this.done = true;
         this.doneAt = Instant.now();
     }
+
+    /** Снимает отметку о выполнении (исправление ошибки) и стирает момент отметки. */
+    public void markUndone() {
+        this.done = false;
+        this.doneAt = null;
+    }
 }

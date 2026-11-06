@@ -3,6 +3,7 @@ package com.example.notificator.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -231,6 +232,86 @@ class TrackerServiceTest {
         assertTrue(entries.findById(doneEntryId).orElseThrow().isDone()); // история сохранена
         assertEquals(1, service.activeTasks(CHAT + 1).size()); // чужие дела не тронуты
         assertEquals(0, service.removeAllTasks(CHAT)); // повторно — удалять нечего
+    }
+
+    // ---------- Исправление статуса за вчера ----------
+    // Часы: 2026-11-06 21:30 UTC = 7 ноября 00:30 по Москве, поэтому «вчера» = 6 ноября (а не 5-е, как по UTC).
+
+    private static final LocalDate MOSCOW_YESTERDAY = MOSCOW_TODAY.minusDays(1);
+
+    private TaskEntry yesterdayEntry(long chatId, String title, boolean done) {
+        User user = users.findByTelegramChatId(chatId).orElseThrow();
+        Task task = tasks.save(new Task(user, title));
+        TaskEntry entry = new TaskEntry(task, MOSCOW_YESTERDAY);
+        if (done) {
+            entry.markDone();
+        }
+        return entries.save(entry);
+    }
+
+    @Test
+    void yesterdayNotDoneTaskCanBeMarkedDone() {
+        service.register(CHAT);
+        TaskEntry entry = yesterdayEntry(CHAT, "Читать", false);
+
+        assertEquals(EditResult.MARKED_DONE, service.setYesterdayDone(CHAT, entry.getId(), true));
+
+        assertTrue(entry.isDone());
+        assertNotNull(entry.getDoneAt());
+    }
+
+    @Test
+    void yesterdayDoneTaskCanBeUnmarked() {
+        service.register(CHAT);
+        TaskEntry entry = yesterdayEntry(CHAT, "Читать", true);
+
+        assertEquals(EditResult.MARKED_UNDONE, service.setYesterdayDone(CHAT, entry.getId(), false));
+
+        assertFalse(entry.isDone());
+        assertNull(entry.getDoneAt());
+    }
+
+    @Test
+    void settingTheSameStatusChangesNothing() {
+        service.register(CHAT);
+        TaskEntry done = yesterdayEntry(CHAT, "Сделано", true);
+        TaskEntry notDone = yesterdayEntry(CHAT, "Не сделано", false);
+
+        assertEquals(EditResult.UNCHANGED, service.setYesterdayDone(CHAT, done.getId(), true));
+        assertEquals(EditResult.UNCHANGED, service.setYesterdayDone(CHAT, notDone.getId(), false));
+        assertTrue(done.isDone());
+        assertFalse(notDone.isDone());
+    }
+
+    @Test
+    void onlyYesterdayCanBeEditedNotTodayNorOlderDays() {
+        service.register(CHAT);
+        User user = users.findByTelegramChatId(CHAT).orElseThrow();
+        Task task = tasks.save(new Task(user, "Читать"));
+        TaskEntry today = entries.save(new TaskEntry(task, MOSCOW_TODAY));
+        // 5 ноября — вчера по UTC, но позавчера для москвича: «вчера» считается по часовому поясу пользователя
+        TaskEntry twoDaysAgo = entries.save(new TaskEntry(task, MOSCOW_YESTERDAY.minusDays(1)));
+
+        assertEquals(EditResult.NOT_EDITABLE, service.setYesterdayDone(CHAT, today.getId(), true));
+        assertEquals(EditResult.NOT_EDITABLE, service.setYesterdayDone(CHAT, twoDaysAgo.getId(), true));
+        assertFalse(today.isDone());
+        assertFalse(twoDaysAgo.isDone());
+    }
+
+    @Test
+    void cannotEditAnotherUsersEntryOrUnknownEntry() {
+        service.register(CHAT);
+        service.register(CHAT + 1);
+        TaskEntry foreign = yesterdayEntry(CHAT, "Чужое", false);
+
+        assertEquals(EditResult.NOT_FOUND, service.setYesterdayDone(CHAT + 1, foreign.getId(), true));
+        assertEquals(EditResult.NOT_FOUND, service.setYesterdayDone(CHAT, 987654L, true));
+        assertFalse(foreign.isDone());
+    }
+
+    @Test
+    void unregisteredUserCannotEditYesterday() {
+        assertThrows(UserNotRegisteredException.class, () -> service.setYesterdayDone(CHAT, 1L, true));
     }
 
     @Test

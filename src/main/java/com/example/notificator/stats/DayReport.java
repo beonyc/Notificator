@@ -10,9 +10,10 @@ import java.util.List;
  * @param date   запрошенный день
  * @param status можно ли показывать этот день
  * @param items  дела дня в порядке добавления (пусто, если статус не OK или в этот день дел не было)
- * @param today  true, если это сегодняшний день (он ещё не закончен, невыполненное — ещё не провал)
+ * @param today    true, если это сегодняшний день (он ещё не закончен, невыполненное — ещё не провал)
+ * @param editable true, если это вчерашний день: его статусы ещё можно исправить (не успел сегодня)
  */
-public record DayReport(LocalDate date, Status status, List<TodayItem> items, boolean today) {
+public record DayReport(LocalDate date, Status status, List<TodayItem> items, boolean today, boolean editable) {
 
     /** Результат запроса дня. */
     public enum Status {

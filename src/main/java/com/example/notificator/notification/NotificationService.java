@@ -162,7 +162,8 @@ public class NotificationService {
                     .append(" (").append(Math.round(done * 100.0 / total)).append("%).\n");
             sb.append(done == total
                     ? "Красава, день закрыт полностью."
-                    : "Не доделано: " + (total - done) + ". Сегодня без отговорок.");
+                    : "Не доделано: " + (total - done) + ". Сегодня без отговорок.\n"
+                            + "Выполнил, но не успел отметить? Исправь: /week → «Дела по дням» → вчера.");
         }
         if (!todayItems.isEmpty()) {
             if (!sb.isEmpty()) {

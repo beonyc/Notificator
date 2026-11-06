@@ -107,6 +107,38 @@ public class TrackerService {
     }
 
     /**
+     * Исправляет статус дела за ВЧЕРАШНИЙ день: отметить выполненным (не успел вчера) или снять отметку
+     * (отметил по ошибке). Более старые дни менять нельзя, иначе статистику недели можно было бы
+     * переписать задним числом.
+     *
+     * Проверки те же, что в {@link #markDone}: callback-данные приходят от клиента и их можно подделать,
+     * поэтому отметка должна принадлежать этому пользователю, а «вчера» считается по его часовому поясу.
+     *
+     * @param done желаемый статус: true — выполнено, false — не выполнено
+     */
+    public EditResult setYesterdayDone(long chatId, long entryId, boolean done) {
+        User user = findUser(chatId);
+        TaskEntry entry = entries.findById(entryId)
+                .filter(e -> e.getTask().getUser().getId().equals(user.getId()))
+                .orElse(null);
+        if (entry == null) {
+            return EditResult.NOT_FOUND;
+        }
+        if (!entry.getDate().equals(today(user).minusDays(1))) {
+            return EditResult.NOT_EDITABLE;
+        }
+        if (entry.isDone() == done) {
+            return EditResult.UNCHANGED;
+        }
+        if (done) {
+            entry.markDone();
+            return EditResult.MARKED_DONE;
+        }
+        entry.markUndone();
+        return EditResult.MARKED_UNDONE;
+    }
+
+    /**
      * Отмечает выполненными все невыполненные дела на сегодня (кнопка «Выполнить все»).
      *
      * @return сколько дел отмечено; 0, если все уже были выполнены или дел нет
