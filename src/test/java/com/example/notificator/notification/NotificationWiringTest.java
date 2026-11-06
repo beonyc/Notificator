@@ -30,6 +30,7 @@ class NotificationWiringTest {
     @Test
     void propertiesAreReadFromApplicationYaml() {
         assertEquals(LocalTime.of(8, 0), props.summaryTime());
+        assertEquals(LocalTime.of(0, 5), props.weeklyReportTime());
         assertEquals(List.of(LocalTime.of(13, 0), LocalTime.of(17, 0), LocalTime.of(21, 0)), props.reminderTimes());
         assertEquals(30, props.catchUpMinutes());
         assertEquals(7, props.quoteRepeatDays());

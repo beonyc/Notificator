@@ -12,6 +12,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.example.notificator.service.MarkResult;
+import com.example.notificator.stats.StatsService;
+import com.example.notificator.stats.WeeklyStats;
+import java.time.LocalDate;
 import com.example.notificator.service.ReminderSettings;
 import com.example.notificator.service.ReminderSettingsService;
 import java.time.LocalTime;
@@ -31,13 +34,15 @@ class CommandHandlerTest {
 
     private TrackerService service;
     private ReminderSettingsService reminders;
+    private StatsService stats;
     private CommandHandler handler;
 
     @BeforeEach
     void setUp() {
         service = mock(TrackerService.class);
         reminders = mock(ReminderSettingsService.class);
-        handler = new CommandHandler(service, reminders);
+        stats = mock(StatsService.class);
+        handler = new CommandHandler(service, reminders, stats);
     }
 
     @Test
@@ -297,6 +302,26 @@ class CommandHandlerTest {
     void garbageRemoveCallbackIsIgnored() {
         assertEquals("Неизвестное действие", handler.handleCallback(CHAT, "rm:abc").notice());
         verify(service, never()).removeTask(anyLong(), anyLong());
+    }
+
+    // ---------- /week ----------
+
+    @Test
+    void weekShowsCurrentWeekStatistics() {
+        when(stats.currentWeek(CHAT)).thenReturn(new WeeklyStats(LocalDate.of(2026, 11, 2), LocalDate.of(2026, 11, 7),
+                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Проленился"));
+
+        BotReply reply = handler.handle(CHAT, "/week");
+
+        assertTrue(reply.text().startsWith("📊 Неделя в процессе 02.11–07.11"), reply.text());
+        assertTrue(reply.buttons().isEmpty());
+    }
+
+    @Test
+    void weekFromUnregisteredUserAsksToPressStart() {
+        when(stats.currentWeek(CHAT)).thenThrow(new UserNotRegisteredException(CHAT));
+
+        assertEquals("Сначала нажми /start.", handler.handle(CHAT, "/week").text());
     }
 
     // ---------- /reminders ----------

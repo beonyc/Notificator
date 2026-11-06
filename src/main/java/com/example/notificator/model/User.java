@@ -51,6 +51,9 @@ public class User {
      */
     private LocalDate lastSummaryDate;
 
+    /** Понедельник, в который уже обработан недельный отчёт (чтобы не отправлять его дважды). */
+    private LocalDate lastWeeklyReportDate;
+
     /** Начало последнего обработанного слота напоминаний (по времени пользователя), например 13:00 сегодня. */
     private LocalDateTime lastReminderSlot;
 

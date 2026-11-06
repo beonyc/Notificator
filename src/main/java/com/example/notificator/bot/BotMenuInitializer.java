@@ -34,6 +34,7 @@ public class BotMenuInitializer {
             new BotCommand("today", "Дела на сегодня"),
             new BotCommand("add", "Добавить дело: /add Читать 30 минут"),
             new BotCommand("remove", "Убрать дело из списка"),
+            new BotCommand("week", "Статистика за неделю и оценка"),
             new BotCommand("reminders", "Время напоминаний и их отключение"),
             new BotCommand("start", "Начать работу с ботом"));
 

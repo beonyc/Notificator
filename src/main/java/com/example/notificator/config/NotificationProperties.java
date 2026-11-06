@@ -11,6 +11,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * задаёт значения, если настройка не указана. Все времена — по часовому поясу пользователя.
  *
  * @param summaryTime      время утреннего итога вчерашнего дня
+ * @param weeklyReportTime время недельного отчёта по понедельникам (отчёт за прошедшую неделю пн–вс)
  * @param reminderTimes    времена напоминаний о невыполненных делах
  * @param catchUpMinutes   сколько минут после назначенного времени уведомление ещё можно отправить
  *                         (нужно, если бот был выключен или Telegram не ответил)
@@ -19,6 +20,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 @ConfigurationProperties("notifications")
 public record NotificationProperties(
         @DefaultValue("08:00") LocalTime summaryTime,
+        @DefaultValue("00:05") LocalTime weeklyReportTime,
         @DefaultValue({"13:00", "17:00", "21:00"}) List<LocalTime> reminderTimes,
         @DefaultValue("30") int catchUpMinutes,
         @DefaultValue("7") int quoteRepeatDays) {

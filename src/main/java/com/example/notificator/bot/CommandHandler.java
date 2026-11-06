@@ -7,6 +7,8 @@ import com.example.notificator.service.TaskItem;
 import com.example.notificator.service.TodayItem;
 import com.example.notificator.service.TrackerService;
 import com.example.notificator.service.UserNotRegisteredException;
+import com.example.notificator.stats.ReportFormatter;
+import com.example.notificator.stats.StatsService;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -63,10 +65,12 @@ public class CommandHandler {
             /add Читать 30 минут — добавить дело
             /today — дела на сегодня (с кнопками «выполнено»)
             /remove — убрать дело из списка
+            /week — статистика за текущую неделю и оценка продуктивности
             /reminders — время напоминаний, выключить или включить""";
 
     private final TrackerService service;
     private final ReminderSettingsService reminderSettings;
+    private final StatsService statsService;
 
     /**
      * Чаты, от которых бот ждёт время напоминаний (после нажатия «Изменить время»).
@@ -75,9 +79,11 @@ public class CommandHandler {
      */
     private final Set<Long> awaitingTimes = ConcurrentHashMap.newKeySet();
 
-    public CommandHandler(TrackerService service, ReminderSettingsService reminderSettings) {
+    public CommandHandler(TrackerService service, ReminderSettingsService reminderSettings,
+                          StatsService statsService) {
         this.service = service;
         this.reminderSettings = reminderSettings;
+        this.statsService = statsService;
     }
 
     /**
@@ -111,6 +117,7 @@ public class CommandHandler {
                 case "/today" -> today(chatId);
                 case "/remove" -> remove(chatId);
                 case "/reminders" -> reminders(chatId, args);
+                case "/week" -> BotReply.text(ReportFormatter.format(statsService.currentWeek(chatId), false));
                 default -> BotReply.text("Не понял. " + HELP);
             };
         } catch (UserNotRegisteredException e) {
