@@ -338,15 +338,16 @@ public class CommandHandler {
     }
 
     /**
-     * Главное меню: пять пунктов по две кнопки в ряду. Сам является «домом», поэтому кнопки
+     * Главное меню: «Дела на сегодня» длинной кнопкой, остальные четыре по две в ряду. Сам является «домом», поэтому кнопки
      * «🏠 В меню» в нём нет.
      *
      * @param intro заголовок над кнопками (HTML)
      */
     private static BotReply mainMenu(String intro) {
+        // «Дела на сегодня» — главный пункт: длинная кнопка сверху на весь ряд; остальные четыре одного размера, по две в ряд.
         return new BotReply(intro, List.of(
+                ReplyButton.wide("📋 Дела на сегодня", MENU_TODAY),
                 new ReplyButton("➕ Добавить дело", MENU_ADD),
-                new ReplyButton("📋 Дела на сегодня", MENU_TODAY),
                 new ReplyButton("🗑 Убрать дело", MENU_REMOVE),
                 new ReplyButton("📊 Неделя", WEEK),
                 new ReplyButton("⏰ Напоминания", MENU_REMINDERS)), 2);

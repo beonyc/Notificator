@@ -100,8 +100,8 @@ class CommandHandlerTest {
     private static final ReplyButton MENU = new ReplyButton("🏠 В меню", "menu");
 
     private static final List<ReplyButton> MENU_ITEMS = List.of(
+            ReplyButton.wide("📋 Дела на сегодня", "today"), // главный пункт — длинная кнопка на весь ряд
             new ReplyButton("➕ Добавить дело", "add"),
-            new ReplyButton("📋 Дела на сегодня", "today"),
             new ReplyButton("🗑 Убрать дело", "remove"),
             new ReplyButton("📊 Неделя", "week"),
             new ReplyButton("⏰ Напоминания", "reminders"));

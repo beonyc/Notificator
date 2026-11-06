@@ -194,23 +194,35 @@ public class NotificatorBot implements SpringLongPollingBot, LongPollingSingleTh
      * это убирает кнопки, а в новом сообщении ничего не показывает.
      */
     static InlineKeyboardMarkup toMarkup(BotReply reply) {
-        List<ReplyButton> buttons = reply.buttons();
         int columns = Math.max(1, reply.columns());
         List<InlineKeyboardRow> rows = new ArrayList<>();
-        // Режем список кнопок на ряды по columns штук (последний ряд может быть короче).
-        for (int from = 0; from < buttons.size(); from += columns) {
-            InlineKeyboardRow row = new InlineKeyboardRow();
-            for (ReplyButton b : buttons.subList(from, Math.min(from + columns, buttons.size()))) {
-                InlineKeyboardButton.InlineKeyboardButtonBuilder<?, ?> button = InlineKeyboardButton.builder()
-                        .text(b.text())
-                        .callbackData(b.callbackData());
-                if (b.style() != null) {
-                    button.style(b.style()); // цвет кнопки; без стиля поле вообще не отправляем
-                }
-                row.add(button.build());
+        InlineKeyboardRow current = new InlineKeyboardRow();
+        // Обычные кнопки набиваем в ряд по columns штук. Длинная кнопка (wide) всегда занимает ряд целиком:
+        // незаконченный ряд перед ней закрываем (он будет короче), а после неё начинаем новый.
+        for (ReplyButton b : reply.buttons()) {
+            if (b.wide() && !current.isEmpty()) {
+                rows.add(current);
+                current = new InlineKeyboardRow();
             }
-            rows.add(row);
+            current.add(toTelegramButton(b));
+            if (b.wide() || current.size() == columns) {
+                rows.add(current);
+                current = new InlineKeyboardRow();
+            }
+        }
+        if (!current.isEmpty()) {
+            rows.add(current); // последний ряд может быть короче
         }
         return InlineKeyboardMarkup.builder().keyboard(rows).build();
+    }
+
+    private static InlineKeyboardButton toTelegramButton(ReplyButton b) {
+        InlineKeyboardButton.InlineKeyboardButtonBuilder<?, ?> button = InlineKeyboardButton.builder()
+                .text(b.text())
+                .callbackData(b.callbackData());
+        if (b.style() != null) {
+            button.style(b.style()); // цвет кнопки; без стиля поле вообще не отправляем
+        }
+        return button.build();
     }
 }
