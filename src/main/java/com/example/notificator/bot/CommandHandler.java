@@ -100,10 +100,12 @@ public class CommandHandler {
     static final String MENU_REMINDERS = "reminders";
 
     /**
-     * Текст сообщения-меню, когда над кнопками слов быть не должно. Telegram отвергает пустой текст (и текст из одних
-     * пробелов), а «Braille Pattern Blank» (U+2800) пробелом не считается и выглядит пустым.
+     * Текст сообщения-меню, когда над кнопками слов быть не должно: один значок. Telegram не принимает сообщение
+     * без текста. Невидимые символы (проверено: U+2800 «Braille Pattern Blank») он тоже считает пустым текстом и при
+     * редактировании сообщения отвечает «text must be non-empty», из-за чего кнопка «В меню» переставала работать.
+     * Обычный видимый значок принимается всегда.
      */
-    static final String EMPTY_TEXT = "⠀";
+    static final String MENU_TEXT = "🏠";
 
     /** Кнопка возврата в главное меню, которая добавляется под каждый экран. */
     static final ReplyButton MENU_BUTTON = new ReplyButton("🏠 В меню", MENU);
@@ -347,12 +349,12 @@ public class CommandHandler {
      * Главное меню: «Дела на сегодня» длинной кнопкой, остальные четыре по две в ряду. Сам является «домом», поэтому кнопки
      * «🏠 В меню» в нём нет.
      *
-     * @param intro текст над кнопками (HTML); пустая строка — в сообщении только кнопки. Telegram не принимает
-     *              сообщение с пустым текстом, поэтому вместо него ставится невидимый символ {@link #EMPTY_TEXT}
+     * @param intro текст над кнопками (HTML); пустая строка — слов нет, остаётся один значок {@link #MENU_TEXT}
+     *              (сообщение без текста Telegram не принимает)
      */
     private static BotReply mainMenu(String intro) {
         // «Дела на сегодня» — главный пункт: длинная кнопка сверху на весь ряд; остальные четыре одного размера, по две в ряд.
-        return new BotReply(intro.isBlank() ? EMPTY_TEXT : intro, List.of(
+        return new BotReply(intro.isBlank() ? MENU_TEXT : intro, List.of(
                 ReplyButton.wide("📋 Дела на сегодня", MENU_TODAY),
                 new ReplyButton("➕ Добавить дело", MENU_ADD),
                 new ReplyButton("🗑 Убрать дело", MENU_REMOVE),

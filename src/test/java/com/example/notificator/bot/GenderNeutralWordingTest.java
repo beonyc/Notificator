@@ -85,6 +85,8 @@ class GenderNeutralWordingTest {
 
         for (BotReply screen : screens) {
             GenderCheck.assertNeutral("текст экрана", screen.text());
+            assertTrue(CommandHandlerTest.hasVisibleContent(screen.text()),
+                    "у экрана нет видимого текста — Telegram отвергнет такое сообщение: [" + screen.text() + "]");
             screen.buttons().forEach(b -> GenderCheck.assertNeutral("кнопка «" + b.text() + "»", b.text()));
         }
     }

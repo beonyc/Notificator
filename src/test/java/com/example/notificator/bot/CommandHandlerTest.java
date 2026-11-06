@@ -151,9 +151,39 @@ class CommandHandlerTest {
 
         assertNull(response.notice());
         assertEquals(MENU_ITEMS, response.view().buttons());
-        assertEquals(CommandHandler.EMPTY_TEXT, response.view().text()); // над кнопками слов нет
-        assertEquals("⠀", response.view().text()); // невидимый символ: Telegram не принимает пустой текст
-        assertTrue(response.view().text().isBlank() == false, "текст не должен считаться пробелами, иначе Telegram его отвергнет");
+        // над кнопками слов нет, только значок: Telegram отвергает пустой текст и невидимые символы
+        assertEquals(CommandHandler.MENU_TEXT, response.view().text());
+        assertEquals("🏠", response.view().text());
+    }
+
+    @Test
+    void menuCommandAndStartMenuAlsoUseVisibleIconNotInvisibleCharacter() {
+        assertEquals("🏠", handler.handle(CHAT, "/menu").text());
+        assertTrue(CommandHandlerTest.hasVisibleContent(handler.handle(CHAT, "/menu").text()));
+    }
+
+    /**
+     * Есть ли в тексте хоть один видимый символ. Telegram отвергает пустой текст, а также текст из пробелов и
+     * «невидимок» (в реальной работе так отказал U+2800: «text must be non-empty»).
+     */
+    static boolean hasVisibleContent(String text) {
+        return text.codePoints().anyMatch(cp -> {
+            int type = Character.getType(cp);
+            boolean invisible = Character.isWhitespace(cp) || Character.isSpaceChar(cp)
+                    || type == Character.FORMAT || type == Character.CONTROL || type == Character.UNASSIGNED
+                    || cp == 0x2800 || cp == 0x3164 || cp == 0x115F || cp == 0x1160 || cp == 0x200B; // «пустые» символы
+            return !invisible;
+        });
+    }
+
+    @Test
+    void visibleContentCheckRejectsTheCharactersTelegramRefused() {
+        assertTrue(!hasVisibleContent(""));
+        assertTrue(!hasVisibleContent("   \n"));
+        assertTrue(!hasVisibleContent("⠀"));       // Braille Pattern Blank — именно он сломал меню
+        assertTrue(!hasVisibleContent("​ㅤ")); // zero-width space и Hangul Filler
+        assertTrue(hasVisibleContent("🏠"));
+        assertTrue(hasVisibleContent("a"));
     }
 
     @Test
