@@ -313,7 +313,8 @@ class CommandHandlerTest {
 
         assertTrue(reply.text().startsWith("🔔 Напоминания: 13:00, 17:00 (по умолчанию)"), reply.text());
         assertTrue(reply.text().contains("Europe/Moscow"));
-        assertEquals(List.of(new ReplyButton("🔕 Выключить", "rem:off")), reply.buttons());
+        assertEquals(List.of(new ReplyButton("✏️ Изменить время", "rem:edit"),
+                new ReplyButton("🔕 Выключить", "rem:off")), reply.buttons());
     }
 
     @Test
@@ -323,7 +324,8 @@ class CommandHandlerTest {
         BotReply reply = handler.handle(CHAT, "/reminders");
 
         assertTrue(reply.text().startsWith("🔔 Напоминания: 09:30\n"), reply.text());
-        assertEquals(List.of(new ReplyButton("🔕 Выключить", "rem:off"),
+        assertEquals(List.of(new ReplyButton("✏️ Изменить время", "rem:edit"),
+                new ReplyButton("🔕 Выключить", "rem:off"),
                 new ReplyButton("↩️ По умолчанию", "rem:default")), reply.buttons());
     }
 
@@ -335,7 +337,98 @@ class CommandHandlerTest {
 
         assertTrue(reply.text().startsWith("🔕 Напоминания выключены."), reply.text());
         assertTrue(reply.text().contains("Сохранённое время: 13:00"));
-        assertEquals(List.of(new ReplyButton("🔔 Включить", "rem:on")), reply.buttons());
+        assertEquals(List.of(new ReplyButton("✏️ Изменить время", "rem:edit"),
+                new ReplyButton("🔔 Включить", "rem:on")), reply.buttons());
+    }
+
+    @Test
+    void editButtonAsksForTimesAndNextPlainMessageSetsThem() {
+        when(reminders.get(CHAT)).thenReturn(settings(true, true, LocalTime.of(9, 0), LocalTime.of(18, 0)));
+
+        CallbackResponse ask = handler.handleCallback(CHAT, "rem:edit");
+
+        assertEquals("Жду время", ask.notice());
+        assertTrue(ask.view().text().startsWith("Отправь время напоминаний одним сообщением"), ask.view().text());
+        assertTrue(ask.view().text().contains("Europe/Moscow"));
+        assertEquals(List.of(new ReplyButton("↩️ Отмена", "rem:cancel")), ask.view().buttons());
+
+        BotReply reply = handler.handle(CHAT, "9:00 18:00"); // обычное сообщение без команды
+
+        verify(reminders).setTimes(CHAT, List.of(LocalTime.of(9, 0), LocalTime.of(18, 0)));
+        assertTrue(reply.text().startsWith("Готово, время напоминаний обновлено."), reply.text());
+    }
+
+    @Test
+    void afterTimesAreSetPlainTextIsNoLongerTreatedAsTimes() {
+        when(reminders.get(CHAT)).thenReturn(settings(true, true, LocalTime.of(9, 0)));
+        handler.handleCallback(CHAT, "rem:edit");
+        handler.handle(CHAT, "9:00");
+
+        BotReply reply = handler.handle(CHAT, "привет");
+
+        assertTrue(reply.text().startsWith("Не понял. Команды"), reply.text());
+        verify(reminders, org.mockito.Mockito.times(1)).setTimes(anyLong(), any());
+    }
+
+    @Test
+    void invalidTimesWhileWaitingKeepWaitingAndMentionCancel() {
+        when(reminders.get(CHAT)).thenReturn(settings(true, true, LocalTime.of(9, 0)));
+        handler.handleCallback(CHAT, "rem:edit");
+
+        BotReply bad = handler.handle(CHAT, "утром и вечером");
+
+        assertTrue(bad.text().startsWith("Не понял время «утром»"), bad.text());
+        assertTrue(bad.text().contains("/cancel"));
+        verify(reminders, never()).setTimes(anyLong(), any());
+
+        handler.handle(CHAT, "8:30"); // исправленный вариант принимается без повторного нажатия кнопки
+        verify(reminders).setTimes(CHAT, List.of(LocalTime.of(8, 30)));
+    }
+
+    @Test
+    void cancelCommandAndCancelButtonStopWaiting() {
+        when(reminders.get(CHAT)).thenReturn(settings(true, true, LocalTime.of(9, 0)));
+
+        handler.handleCallback(CHAT, "rem:edit");
+        assertEquals("Отменено.", handler.handle(CHAT, "/cancel").text());
+        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("Не понял. Команды"));
+
+        handler.handleCallback(CHAT, "rem:edit");
+        CallbackResponse cancelled = handler.handleCallback(CHAT, "rem:cancel");
+        assertEquals("Отменено", cancelled.notice());
+        assertTrue(cancelled.view().text().contains("Напоминания"));
+        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("Не понял. Команды"));
+
+        assertEquals("Отменять нечего.", handler.handle(CHAT, "/cancel").text());
+        verify(reminders, never()).setTimes(anyLong(), any());
+    }
+
+    @Test
+    void anotherCommandWhileWaitingWorksAndStopsWaiting() {
+        when(reminders.get(CHAT)).thenReturn(settings(true, true, LocalTime.of(9, 0)));
+        when(service.todayItems(CHAT)).thenReturn(List.of());
+        handler.handleCallback(CHAT, "rem:edit");
+
+        BotReply today = handler.handle(CHAT, "/today");
+
+        assertTrue(today.text().startsWith("На сегодня дел нет"), today.text());
+        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("Не понял. Команды")); // ожидание сброшено
+    }
+
+    @Test
+    void plainTextWithoutPressingEditButtonIsNotTreatedAsTimes() {
+        BotReply reply = handler.handle(CHAT, "9:00 18:00");
+
+        assertTrue(reply.text().startsWith("Не понял. Команды"), reply.text());
+        verify(reminders, never()).setTimes(anyLong(), any());
+    }
+
+    @Test
+    void editButtonFromUnregisteredUserAsksToPressStart() {
+        when(reminders.get(CHAT)).thenThrow(new UserNotRegisteredException(CHAT));
+
+        assertEquals("Сначала нажми /start", handler.handleCallback(CHAT, "rem:edit").notice());
+        assertTrue(handler.handle(CHAT, "9:00").text().startsWith("Не понял. Команды")); // ожидание не включилось
     }
 
     @Test

@@ -10,6 +10,8 @@ import com.example.notificator.service.UserNotRegisteredException;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -48,6 +50,8 @@ public class CommandHandler {
     static final String REMINDERS_ON = "rem:on";
     static final String REMINDERS_OFF = "rem:off";
     static final String REMINDERS_DEFAULT = "rem:default";
+    static final String REMINDERS_EDIT = "rem:edit";
+    static final String REMINDERS_CANCEL = "rem:cancel";
 
     /** Время в команде /reminders: «9», «9:00», «09.30» (час 0–23, минуты 0–59 проверяются отдельно). */
     private static final Pattern TIME = Pattern.compile("^(\\d{1,2})(?:[:.](\\d{2}))?$");
@@ -63,6 +67,13 @@ public class CommandHandler {
 
     private final TrackerService service;
     private final ReminderSettingsService reminderSettings;
+
+    /**
+     * Чаты, от которых бот ждёт время напоминаний (после нажатия «Изменить время»).
+     * Хранится в памяти: после перезапуска бота ожидание сбрасывается — это безопасно,
+     * пользователь просто нажмёт кнопку ещё раз. Набор потокобезопасный.
+     */
+    private final Set<Long> awaitingTimes = ConcurrentHashMap.newKeySet();
 
     public CommandHandler(TrackerService service, ReminderSettingsService reminderSettings) {
         this.service = service;
@@ -83,7 +94,18 @@ public class CommandHandler {
         String args = parts.length > 1 ? parts[1].trim() : "";
 
         try {
+            // Бот ждёт время после кнопки «Изменить время»: обычное сообщение — это и есть время.
+            // Любая другая команда (кроме /cancel) означает «передумал» и сбрасывает ожидание.
+            if (awaitingTimes.contains(chatId)) {
+                if (!text.trim().startsWith("/")) {
+                    return setTimesFromText(chatId, text.trim(), true);
+                }
+                if (!command.equals("/cancel")) {
+                    awaitingTimes.remove(chatId);
+                }
+            }
             return switch (command) {
+                case "/cancel" -> BotReply.text(awaitingTimes.remove(chatId) ? "Отменено." : "Отменять нечего.");
                 case "/start" -> BotReply.text(start(chatId));
                 case "/add" -> BotReply.text(add(chatId, args));
                 case "/today" -> today(chatId);
@@ -116,13 +138,21 @@ public class CommandHandler {
                     return removeAll(chatId);
                 case REMOVE_ALL_NO:
                     return new CallbackResponse("Отменено", remove(chatId));
+                case REMINDERS_EDIT:
+                    return askForTimes(chatId);
+                case REMINDERS_CANCEL:
+                    awaitingTimes.remove(chatId);
+                    return new CallbackResponse("Отменено", remindersView(chatId, ""));
                 case REMINDERS_ON:
+                    awaitingTimes.remove(chatId);
                     reminderSettings.setEnabled(chatId, true);
                     return new CallbackResponse("Напоминания включены", remindersView(chatId, ""));
                 case REMINDERS_OFF:
+                    awaitingTimes.remove(chatId);
                     reminderSettings.setEnabled(chatId, false);
                     return new CallbackResponse("Напоминания выключены", remindersView(chatId, ""));
                 case REMINDERS_DEFAULT:
+                    awaitingTimes.remove(chatId);
                     reminderSettings.resetToDefault(chatId);
                     return new CallbackResponse("Время сброшено", remindersView(chatId, ""));
                 default:
@@ -274,23 +304,47 @@ public class CommandHandler {
                 // дальше разбираем как список времён
             }
         }
+        return setTimesFromText(chatId, args, false);
+    }
 
+    /**
+     * Разбирает текст со временами («9:00 14:30 20:00») и, если всё верно, сохраняет их.
+     * Используется и командой «/reminders 9:00 14:30», и режимом ожидания после кнопки «Изменить время».
+     *
+     * @param awaiting true, если бот ждёт время после кнопки: при ошибке напоминаем про /cancel,
+     *                 а режим ожидания остаётся включённым (можно просто прислать исправленный вариант)
+     */
+    private BotReply setTimesFromText(long chatId, String text, boolean awaiting) {
+        String hint = awaiting ? "\nПопробуй ещё раз или /cancel, чтобы отменить." : "";
         List<LocalTime> times = new ArrayList<>();
-        for (String token : args.split("[\\s,;]+")) {
+        for (String token : text.split("[\\s,;]+")) {
             Matcher m = TIME.matcher(token);
             int hour = m.matches() ? Integer.parseInt(m.group(1)) : -1;
             int minute = m.matches() && m.group(2) != null ? Integer.parseInt(m.group(2)) : 0;
             if (hour < 0 || hour > 23 || minute > 59) {
-                return BotReply.text("Не понял время «" + token + "». Пример: /reminders 9:00 14:30 20:00");
+                return BotReply.text("Не понял время «" + token + "». Пример: 9:00 14:30 20:00" + hint);
             }
             times.add(LocalTime.of(hour, minute));
         }
         if (times.stream().distinct().count() > ReminderSettingsService.MAX_REMINDERS) {
             return BotReply.text("Слишком много: максимум " + ReminderSettingsService.MAX_REMINDERS
-                    + " напоминаний в день.");
+                    + " напоминаний в день." + hint);
         }
         reminderSettings.setTimes(chatId, times);
+        awaitingTimes.remove(chatId);
         return remindersView(chatId, "Готово, время напоминаний обновлено.\n\n");
+    }
+
+    /** Кнопка «✏️ Изменить время»: просим прислать время обычным сообщением и запоминаем, что ждём его. */
+    private CallbackResponse askForTimes(long chatId) {
+        ReminderSettings s = reminderSettings.get(chatId); // заодно проверяет, что пользователь зарегистрирован
+        awaitingTimes.add(chatId);
+        BotReply prompt = new BotReply(
+                "Отправь время напоминаний одним сообщением, например:\n9:00 14:30 20:00\n\n"
+                        + "Сколько времён — столько напоминаний в день (до " + ReminderSettingsService.MAX_REMINDERS
+                        + "). Формат 24 часа, время по твоему часовому поясу (" + s.timezone() + ").",
+                List.of(new ReplyButton("↩️ Отмена", REMINDERS_CANCEL)));
+        return new CallbackResponse("Жду время", prompt);
     }
 
     /** Текущие настройки напоминаний и кнопки «включить/выключить» и «по умолчанию». */
@@ -305,10 +359,12 @@ public class CommandHandler {
             sb.append("🔕 Напоминания выключены.\nСохранённое время: ").append(times);
         }
         sb.append("\nВремя по твоему часовому поясу: ").append(s.timezone()).append('.');
-        sb.append("\n\nЗадать своё время (до ").append(ReminderSettingsService.MAX_REMINDERS)
-                .append(" штук, сколько времён — столько напоминаний):\n/reminders 9:00 14:30 20:00");
+        sb.append("\n\nЧтобы изменить время, нажми «✏️ Изменить время» и отправь, например: 9:00 14:30 20:00")
+                .append("\n(до ").append(ReminderSettingsService.MAX_REMINDERS)
+                .append(" штук; сколько времён — столько напоминаний в день)");
 
         List<ReplyButton> buttons = new ArrayList<>();
+        buttons.add(new ReplyButton("✏️ Изменить время", REMINDERS_EDIT));
         buttons.add(s.enabled()
                 ? new ReplyButton("🔕 Выключить", REMINDERS_OFF)
                 : new ReplyButton("🔔 Включить", REMINDERS_ON));

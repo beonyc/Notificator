@@ -87,6 +87,7 @@ public class NotificatorBot implements SpringLongPollingBot, LongPollingSingleTh
     }
 
     private void onMessage(long chatId, String text) {
+        log.info("Получено сообщение из чата {}: {}", chatId, text);
         BotReply reply;
         try {
             reply = commandHandler.handle(chatId, text);
