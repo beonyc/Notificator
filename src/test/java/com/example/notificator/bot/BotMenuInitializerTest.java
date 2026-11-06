@@ -8,6 +8,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.example.notificator.service.ReminderSettings;
+import com.example.notificator.service.ReminderSettingsService;
+import com.example.notificator.service.TrackerService;
+import java.time.LocalTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -28,13 +32,16 @@ class BotMenuInitializerTest {
         ArgumentCaptor<SetMyCommands> captor = ArgumentCaptor.forClass(SetMyCommands.class);
         verify(client).execute(captor.capture());
         List<String> names = captor.getValue().getCommands().stream().map(BotCommand::getCommand).toList();
-        assertEquals(List.of("today", "add", "remove", "start"), names);
+        assertEquals(List.of("today", "add", "remove", "reminders", "start"), names);
     }
 
     @Test
     void everyMenuCommandIsKnownToHandler() {
         // Защита от рассинхрона: команда из меню не должна попадать в ответ «Не понял».
-        CommandHandler handler = new CommandHandler(mock(com.example.notificator.service.TrackerService.class));
+        ReminderSettingsService reminderSettings = mock(ReminderSettingsService.class);
+        when(reminderSettings.get(1L)).thenReturn(
+                new ReminderSettings(true, List.of(LocalTime.of(13, 0)), false, "Europe/Moscow"));
+        CommandHandler handler = new CommandHandler(mock(TrackerService.class), reminderSettings);
         for (BotCommand command : BotMenuInitializer.COMMANDS) {
             String text = handler.handle(1L, "/" + command.getCommand()).text();
             assertTrue(!text.startsWith("Не понял"), "Команда /" + command.getCommand() + " не обрабатывается");
