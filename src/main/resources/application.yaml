@@ -1,6 +1,15 @@
 spring:
   application:
     name: Notificator
+  datasource:
+    # Файловая H2: данные лежат в ./data/tracker.mv.db и переживают перезапуск
+    url: jdbc:h2:file:./data/tracker;AUTO_SERVER=TRUE
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      # Hibernate сам создаёт и обновляет таблицы по сущностям (для боевого запуска — Flyway)
+      ddl-auto: update
 telegram:
   # Токен берётся из переменной окружения TELEGRAM_BOT_TOKEN (в git не попадает).
   # Значения по умолчанию нет намеренно: без переменной приложение не запустится.
