@@ -22,7 +22,15 @@ dependencies {
 	// Telegram-бот: стартер для long polling и клиент для отправки сообщений
 	implementation 'org.telegram:telegrambots-springboot-longpolling-starter:10.3.0'
 	implementation 'org.telegram:telegrambots-client:10.3.0'
+	// JPA (Hibernate) и Spring Data: сущности и репозитории
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	// H2 — файловая БД для MVP (см. SPEC.md); для боевого запуска заменим на PostgreSQL
+	runtimeOnly 'com.h2database:h2'
+	// Lombok генерирует геттеры/сеттеры, чтобы не писать их руками
+	compileOnly 'org.projectlombok:lombok'
+	annotationProcessor 'org.projectlombok:lombok'
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
