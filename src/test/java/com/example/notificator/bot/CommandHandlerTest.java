@@ -95,6 +95,18 @@ class CommandHandlerTest {
     }
 
     @Test
+    void helpListsAddCommandWithoutExampleTitle() {
+        when(service.register(CHAT)).thenReturn(false);
+        String unknown = handler.handle(CHAT, "привет").text();
+        String start = handler.handle(CHAT, "/start").text();
+
+        for (String text : new String[] {CommandHandler.HELP, unknown, start}) {
+            assertTrue(text.contains("➕ /add — добавить дело"), text);
+            assertFalse(text.contains("/add Читать"), text);
+        }
+    }
+
+    @Test
     void addWithBlankTitleAlsoShowsExamples() {
         assertTrue(handler.handle(CHAT, "/add    ").text().contains("<code>/add Сделать зарядку</code>"));
     }
