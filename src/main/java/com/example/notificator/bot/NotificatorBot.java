@@ -125,6 +125,16 @@ public class NotificatorBot implements SpringLongPollingBot, LongPollingSingleTh
             reply = BotReply.text(ERROR_TEXT);
         }
 
+        send(chatId, reply, "ответ");
+    }
+
+    /**
+     * Отправляет экран новым сообщением. Ошибку логируем и не пробрасываем: одно неудавшееся сообщение
+     * не должно останавливать работу бота.
+     *
+     * @param label как назвать это сообщение в логе («ответ», «экран новым сообщением»)
+     */
+    private void send(long chatId, BotReply reply, String label) {
         SendMessage message = SendMessage.builder()
                 .chatId(chatId)
                 .text(reply.text())
@@ -133,12 +143,10 @@ public class NotificatorBot implements SpringLongPollingBot, LongPollingSingleTh
                 .build();
         try {
             telegramClient.execute(message);
-            log.info("← ответ ({} симв., кнопок: {}): {}", reply.text().length(), reply.buttons().size(),
+            log.info("← {} ({} симв., кнопок: {}): {}", label, reply.text().length(), reply.buttons().size(),
                     LogText.oneLine(reply.text()));
         } catch (TelegramApiException e) {
-            // Ошибку логируем и не пробрасываем: одно неудавшееся сообщение
-            // не должно останавливать работу бота.
-            log.error("Не удалось отправить ответ в чат {}", chatId, e);
+            log.error("Не удалось отправить {} в чат {}", label, chatId, e);
         }
     }
 
@@ -182,10 +190,23 @@ public class NotificatorBot implements SpringLongPollingBot, LongPollingSingleTh
                 log.info("← сообщение {} обновлено (кнопок: {}): {}", messageId, response.view().buttons().size(),
                         LogText.oneLine(response.view().text()));
             } catch (TelegramApiException e) {
-                // Частый безобидный случай: «message is not modified» (текст не изменился).
-                log.warn("Не удалось обновить сообщение {} в чате {}: {}", messageId, chatId, e.getMessage());
+                if (isNotModified(e)) {
+                    // Безобидный случай: экран уже показан (например, кнопку нажали дважды), обновлять нечего.
+                    log.info("Сообщение {} не изменилось: этот экран уже показан", messageId);
+                } else {
+                    // Telegram отказался править сообщение (оно слишком старое, удалено, текст не принят...).
+                    // Чтобы пользователь не остался с «мёртвой» кнопкой, показываем экран новым сообщением.
+                    log.warn("Не удалось обновить сообщение {} в чате {}: {} — отправляю экран новым сообщением",
+                            messageId, chatId, e.getMessage());
+                    send(chatId, response.view(), "экран новым сообщением");
+                }
             }
         }
+    }
+
+    /** Telegram отвечает «message is not modified», если новый текст и кнопки совпадают с теми, что уже показаны. */
+    private static boolean isNotModified(TelegramApiException e) {
+        return e.getMessage() != null && e.getMessage().contains("message is not modified");
     }
 
     /**
@@ -194,23 +215,35 @@ public class NotificatorBot implements SpringLongPollingBot, LongPollingSingleTh
      * это убирает кнопки, а в новом сообщении ничего не показывает.
      */
     static InlineKeyboardMarkup toMarkup(BotReply reply) {
-        List<ReplyButton> buttons = reply.buttons();
         int columns = Math.max(1, reply.columns());
         List<InlineKeyboardRow> rows = new ArrayList<>();
-        // Режем список кнопок на ряды по columns штук (последний ряд может быть короче).
-        for (int from = 0; from < buttons.size(); from += columns) {
-            InlineKeyboardRow row = new InlineKeyboardRow();
-            for (ReplyButton b : buttons.subList(from, Math.min(from + columns, buttons.size()))) {
-                InlineKeyboardButton.InlineKeyboardButtonBuilder<?, ?> button = InlineKeyboardButton.builder()
-                        .text(b.text())
-                        .callbackData(b.callbackData());
-                if (b.style() != null) {
-                    button.style(b.style()); // цвет кнопки; без стиля поле вообще не отправляем
-                }
-                row.add(button.build());
+        InlineKeyboardRow current = new InlineKeyboardRow();
+        // Обычные кнопки набиваем в ряд по columns штук. Длинная кнопка (wide) всегда занимает ряд целиком:
+        // незаконченный ряд перед ней закрываем (он будет короче), а после неё начинаем новый.
+        for (ReplyButton b : reply.buttons()) {
+            if (b.wide() && !current.isEmpty()) {
+                rows.add(current);
+                current = new InlineKeyboardRow();
             }
-            rows.add(row);
+            current.add(toTelegramButton(b));
+            if (b.wide() || current.size() == columns) {
+                rows.add(current);
+                current = new InlineKeyboardRow();
+            }
+        }
+        if (!current.isEmpty()) {
+            rows.add(current); // последний ряд может быть короче
         }
         return InlineKeyboardMarkup.builder().keyboard(rows).build();
+    }
+
+    private static InlineKeyboardButton toTelegramButton(ReplyButton b) {
+        InlineKeyboardButton.InlineKeyboardButtonBuilder<?, ?> button = InlineKeyboardButton.builder()
+                .text(b.text())
+                .callbackData(b.callbackData());
+        if (b.style() != null) {
+            button.style(b.style()); // цвет кнопки; без стиля поле вообще не отправляем
+        }
+        return button.build();
     }
 }

@@ -80,8 +80,8 @@ class WeeklyStatsCalculatorTest {
         assertEquals("Хорошо", WeeklyStatsCalculator.verdict(70));
         assertEquals("Средне", WeeklyStatsCalculator.verdict(69));
         assertEquals("Средне", WeeklyStatsCalculator.verdict(50));
-        assertEquals("Проленился", WeeklyStatsCalculator.verdict(49));
-        assertEquals("Проленился", WeeklyStatsCalculator.verdict(0));
+        assertEquals("Лень победила", WeeklyStatsCalculator.verdict(49));
+        assertEquals("Лень победила", WeeklyStatsCalculator.verdict(0));
     }
 
     @Test
@@ -175,7 +175,7 @@ class WeeklyStatsCalculatorTest {
 
         assertEquals(0, s.percent());
         assertEquals(0, s.score());
-        assertEquals("Проленился", s.verdict());
+        assertEquals("Лень победила", s.verdict());
         assertEquals(0, s.streak());
     }
 

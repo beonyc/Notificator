@@ -24,7 +24,7 @@ public final class Visuals {
         return "▰".repeat(filled) + "▱".repeat(BAR_LENGTH - filled);
     }
 
-    /** Смайлик для оценки продуктивности по её тексту («Огонь», «Хорошо», «Средне», «Проленился»). */
+    /** Смайлик для оценки продуктивности по её тексту («Огонь», «Хорошо», «Средне», «Лень победила»). */
     public static String verdictEmoji(String verdict) {
         return switch (verdict) {
             case "Огонь" -> "🔥";

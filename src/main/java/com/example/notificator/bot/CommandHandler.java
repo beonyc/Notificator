@@ -99,6 +99,15 @@ public class CommandHandler {
     static final String MENU_REMOVE = "remove";
     static final String MENU_REMINDERS = "reminders";
 
+    /**
+     * Текст над кнопками главного меню. Он обязателен: Telegram не принимает сообщение без текста, а невидимые
+     * символы (проверено: U+2800 «Braille Pattern Blank») считает пустым текстом и при редактировании отвечает
+     * «text must be non-empty» — кнопка «В меню» тогда переставала работать. Обычный текст принимается всегда.
+     * Кнопки под сообщением растягиваются по его ширине, поэтому слишком короткий текст (например, один значок)
+     * делает кнопки мелкими.
+     */
+    static final String MENU_TITLE = "Главное меню";
+
     /** Кнопка возврата в главное меню, которая добавляется под каждый экран. */
     static final ReplyButton MENU_BUTTON = new ReplyButton("🏠 В меню", MENU);
 
@@ -174,7 +183,7 @@ public class CommandHandler {
                     yield withMenu(BotReply.text(wasWaiting ? "↩️ Отменено." : "🤷 Отменять нечего."));
                 }
                 case "/start" -> start(chatId);
-                case "/menu" -> mainMenu("🏠 <b>Главное меню</b>\nВыбери действие:");
+                case "/menu" -> mainMenu("");
                 case "/add" -> add(chatId, args);
                 case "/today" -> today(chatId);
                 case "/remove" -> remove(chatId);
@@ -182,7 +191,7 @@ public class CommandHandler {
                 case "/week" -> weekReport(chatId);
                 default -> {
                     log.info("Не понял ввод (не команда бота), показываю главное меню");
-                    yield mainMenu("🤔 <b>Не понял.</b>\nВыбери действие в меню:");
+                    yield mainMenu("🤔 <b>Не понял.</b>");
                 }
             };
         } catch (UserNotRegisteredException e) {
@@ -219,7 +228,7 @@ public class CommandHandler {
             // Кнопки без id сравниваем целиком; они не пересекаются с префиксами «done:» и «rm:».
             switch (data) {
                 case MENU:
-                    return new CallbackResponse(null, mainMenu("🏠 <b>Главное меню</b>\nВыбери действие:"));
+                    return new CallbackResponse(null, mainMenu(""));
                 case MENU_ADD:
                     return askForTitle(chatId);
                 case MENU_TODAY:
@@ -338,15 +347,16 @@ public class CommandHandler {
     }
 
     /**
-     * Главное меню: пять пунктов по две кнопки в ряду. Сам является «домом», поэтому кнопки
+     * Главное меню: «Дела на сегодня» длинной кнопкой, остальные четыре по две в ряду. Сам является «домом», поэтому кнопки
      * «🏠 В меню» в нём нет.
      *
-     * @param intro заголовок над кнопками (HTML)
+     * @param intro текст над кнопками (HTML); пустая строка — просто подпись {@link #MENU_TITLE}
      */
     private static BotReply mainMenu(String intro) {
-        return new BotReply(intro, List.of(
+        // «Дела на сегодня» — главный пункт: длинная кнопка сверху на весь ряд; остальные четыре одного размера, по две в ряд.
+        return new BotReply(intro.isBlank() ? MENU_TITLE : intro, List.of(
+                ReplyButton.wide("📋 Дела на сегодня", MENU_TODAY),
                 new ReplyButton("➕ Добавить дело", MENU_ADD),
-                new ReplyButton("📋 Дела на сегодня", MENU_TODAY),
                 new ReplyButton("🗑 Убрать дело", MENU_REMOVE),
                 new ReplyButton("📊 Неделя", WEEK),
                 new ReplyButton("⏰ Напоминания", MENU_REMINDERS)), 2);
@@ -361,9 +371,9 @@ public class CommandHandler {
     private BotReply start(long chatId) {
         if (service.register(chatId)) {
             return mainMenu("👋 <b>Привет!</b> Я помогу не забивать на цели: ты ставишь дела на день, "
-                    + "я напоминаю и считаю статистику.\n\n🏠 <b>Главное меню</b>\nВыбери действие:");
+                    + "я напоминаю и считаю статистику.");
         }
-        return mainMenu("✅ Ты уже зарегистрирован.\n\n🏠 <b>Главное меню</b>\nВыбери действие:");
+        return mainMenu("✅ Регистрация уже пройдена.");
     }
 
     /**
@@ -408,9 +418,7 @@ public class CommandHandler {
 
                 <code>Читать 30 минут</code>
                 <code>Сделать зарядку</code>
-                <code>Выучить 10 английских слов</code>
-
-                💡 Передумал — нажми «🏠 В меню».""")));
+                <code>Выучить 10 английских слов</code>""")));
     }
 
     /** Режим ожидания названия: обычное сообщение — название дела. Слишком длинное — просим короче, ждём дальше. */
@@ -681,7 +689,7 @@ public class CommandHandler {
         List<ReplyButton> buttons = new ArrayList<>();
         if (report.editable() && !items.isEmpty()) {
             // Вчерашний день ещё можно исправить: кнопка на каждое дело меняет его статус на противоположный.
-            sb.append("\n\n💡 Не успел вчера? Нажми на дело ниже, чтобы изменить его статус.");
+            sb.append("\n\n💡 Вчерашний день ещё можно исправить: нажми на дело ниже, чтобы изменить его статус.");
             for (TodayItem item : items) {
                 buttons.add(new ReplyButton(
                         (item.done() ? "↩️ Снять: " : "✅ Отметить: ") + shorten(item.title()),

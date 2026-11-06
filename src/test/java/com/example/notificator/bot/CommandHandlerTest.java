@@ -61,7 +61,7 @@ class CommandHandlerTest {
     void startForExistingUserSaysAlreadyRegistered() {
         when(service.register(CHAT)).thenReturn(false);
 
-        assertTrue(handler.handle(CHAT, "/start").text().contains("Ты уже зарегистрирован"));
+        assertTrue(handler.handle(CHAT, "/start").text().contains("Регистрация уже пройдена"));
     }
 
     @Test
@@ -100,8 +100,8 @@ class CommandHandlerTest {
     private static final ReplyButton MENU = new ReplyButton("🏠 В меню", "menu");
 
     private static final List<ReplyButton> MENU_ITEMS = List.of(
+            ReplyButton.wide("📋 Дела на сегодня", "today"), // главный пункт — длинная кнопка на весь ряд
             new ReplyButton("➕ Добавить дело", "add"),
-            new ReplyButton("📋 Дела на сегодня", "today"),
             new ReplyButton("🗑 Убрать дело", "remove"),
             new ReplyButton("📊 Неделя", "week"),
             new ReplyButton("⏰ Напоминания", "reminders"));
@@ -115,7 +115,7 @@ class CommandHandlerTest {
         assertEquals(MENU_ITEMS, reply.buttons());
         assertEquals(2, reply.columns());
         assertTrue(reply.text().contains("Привет!"), reply.text());
-        assertTrue(reply.text().contains("Главное меню"), reply.text());
+        assertFalse(reply.text().contains("Главное меню"), reply.text()); // слов «Главное меню» над кнопками нет
     }
 
     @Test
@@ -125,7 +125,7 @@ class CommandHandlerTest {
         BotReply reply = handler.handle(CHAT, "/start");
 
         assertEquals(MENU_ITEMS, reply.buttons());
-        assertTrue(reply.text().contains("Ты уже зарегистрирован"), reply.text());
+        assertTrue(reply.text().contains("Регистрация уже пройдена"), reply.text());
     }
 
     @Test
@@ -151,7 +151,72 @@ class CommandHandlerTest {
 
         assertNull(response.notice());
         assertEquals(MENU_ITEMS, response.view().buttons());
-        assertTrue(response.view().text().startsWith("🏠 <b>Главное меню</b>"));
+        // над кнопками просто подпись «Главное меню»
+        assertEquals("Главное меню", response.view().text());
+    }
+
+    @Test
+    void menuTextIsPlainTitleWithoutEmojiLineOrInvisibleCharacters() {
+        for (String text : new String[] {handler.handle(CHAT, "/menu").text(),
+                handler.handleCallback(CHAT, "menu").view().text()}) {
+            assertEquals(CommandHandler.MENU_TITLE, text);
+            assertEquals("Главное меню", text);
+            assertTrue(hasVisibleContent(text), "Telegram должен принять этот текст");
+            // только буквы и обычный пробел: ни значка, ни линии, ни «невидимок», ни разметки
+            assertTrue(text.chars().allMatch(c -> Character.isLetter(c) || c == ' '), text);
+        }
+    }
+
+    @Test
+    void menuTitleIsNotCenteredWithPaddingCharacters() {
+        String text = handler.handle(CHAT, "/menu").text();
+
+        assertEquals(text.strip(), text); // нет ни пробелов, ни «пустых» символов по краям
+        assertTrue(!text.contains("⠀") && !text.contains("　"), text);
+    }
+
+    @Test
+    void shortIntroOfUnknownInputIsShownAsIsWithoutExtraLine() {
+        BotReply unknown = handler.handle(CHAT, "привет");
+
+        assertEquals("🤔 <b>Не понял.</b>", unknown.text());
+        assertEquals(MENU_ITEMS, unknown.buttons());
+    }
+
+    @Test
+    void startIntrosAreShownAsIsWithoutTitleOrLine() {
+        when(service.register(CHAT)).thenReturn(false, true);
+
+        String existing = handler.handle(CHAT, "/start").text();
+        String newcomer = handler.handle(CHAT, "/start").text();
+
+        assertEquals("✅ Регистрация уже пройдена.", existing);
+        assertTrue(newcomer.startsWith("👋 <b>Привет!</b>"), newcomer);
+        assertTrue(!newcomer.contains("Главное меню") && !newcomer.contains("━"), newcomer);
+    }
+
+    /**
+     * Есть ли в тексте хоть один видимый символ. Telegram отвергает пустой текст, а также текст из пробелов и
+     * «невидимок» (в реальной работе так отказал U+2800: «text must be non-empty»).
+     */
+    static boolean hasVisibleContent(String text) {
+        return text.codePoints().anyMatch(cp -> {
+            int type = Character.getType(cp);
+            boolean invisible = Character.isWhitespace(cp) || Character.isSpaceChar(cp)
+                    || type == Character.FORMAT || type == Character.CONTROL || type == Character.UNASSIGNED
+                    || cp == 0x2800 || cp == 0x3164 || cp == 0x115F || cp == 0x1160 || cp == 0x200B; // «пустые» символы
+            return !invisible;
+        });
+    }
+
+    @Test
+    void visibleContentCheckRejectsTheCharactersTelegramRefused() {
+        assertTrue(!hasVisibleContent(""));
+        assertTrue(!hasVisibleContent("   \n"));
+        assertTrue(!hasVisibleContent("⠀"));       // Braille Pattern Blank — именно он сломал меню
+        assertTrue(!hasVisibleContent("​ㅤ")); // zero-width space и Hangul Filler
+        assertTrue(hasVisibleContent("🏠"));
+        assertTrue(hasVisibleContent("a"));
     }
 
     @Test
@@ -160,7 +225,7 @@ class CommandHandlerTest {
         when(service.activeTasks(CHAT)).thenReturn(List.of(new TaskItem(7, "Читать")));
         when(reminders.get(CHAT)).thenReturn(settings(true, false, LocalTime.of(13, 0)));
         when(stats.currentWeek(CHAT)).thenReturn(new WeeklyStats(LocalDate.of(2026, 11, 2), LocalDate.of(2026, 11, 5),
-                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Проленился"));
+                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Лень победила"));
 
         assertTrue(handler.handleCallback(CHAT, "today").view().text().startsWith("📋 <b>Дела на сегодня</b>"));
         assertTrue(handler.handleCallback(CHAT, "remove").view().text().startsWith("🗑 <b>Какое дело убрать"));
@@ -176,7 +241,7 @@ class CommandHandlerTest {
         when(service.activeTasks(CHAT)).thenReturn(List.of(new TaskItem(7, "Читать"), new TaskItem(8, "Зарядка")));
         when(reminders.get(CHAT)).thenReturn(settings(true, true, LocalTime.of(9, 0)));
         WeeklyStats weekStats = new WeeklyStats(LocalDate.of(2026, 11, 2), LocalDate.of(2026, 11, 5),
-                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Проленился");
+                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Лень победила");
         when(stats.currentWeek(CHAT)).thenReturn(weekStats);
         when(stats.weekOverview(CHAT)).thenReturn(new WeekOverview(LocalDate.of(2026, 11, 2),
                 LocalDate.of(2026, 11, 5), List.of(new DayStat(LocalDate.of(2026, 11, 5), 2, 0))));
@@ -622,7 +687,7 @@ class CommandHandlerTest {
     @Test
     void weekShowsCurrentWeekStatistics() {
         when(stats.currentWeek(CHAT)).thenReturn(new WeeklyStats(LocalDate.of(2026, 11, 2), LocalDate.of(2026, 11, 7),
-                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Проленился"));
+                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Лень победила"));
 
         BotReply reply = handler.handle(CHAT, "/week");
 
@@ -680,7 +745,7 @@ class CommandHandlerTest {
     @Test
     void backToReportButtonReturnsWeekReportWithDaysButton() {
         when(stats.currentWeek(CHAT)).thenReturn(new WeeklyStats(LocalDate.of(2026, 11, 2), LocalDate.of(2026, 11, 5),
-                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Проленился"));
+                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Лень победила"));
 
         CallbackResponse response = handler.handleCallback(CHAT, "week");
 
@@ -692,7 +757,7 @@ class CommandHandlerTest {
     @Test
     void weekReportFromCommandAndFromBackButtonAreTheSame() {
         when(stats.currentWeek(CHAT)).thenReturn(new WeeklyStats(LocalDate.of(2026, 11, 2), LocalDate.of(2026, 11, 5),
-                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Проленился"));
+                0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Лень победила"));
 
         assertEquals(handler.handle(CHAT, "/week"), handler.handleCallback(CHAT, "week").view());
     }
@@ -758,7 +823,7 @@ class CommandHandlerTest {
                 ▰▰▰▰▰▱▱▱▱▱ 50%
                 Выполнено <b>1</b> из <b>2</b>
 
-                💡 Не успел вчера? Нажми на дело ниже, чтобы изменить его статус.""", view.text());
+                💡 Вчерашний день ещё можно исправить: нажми на дело ниже, чтобы изменить его статус.""", view.text());
         assertEquals(List.of(
                 new ReplyButton("↩️ Снять: Читать", "yd:2026-11-04:1:0"),
                 new ReplyButton("✅ Отметить: Зарядка", "yd:2026-11-04:2:1"),
