@@ -13,8 +13,9 @@ import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 /**
- * Эхо-бот: отвечает пользователю тем же текстом, который получил.
- * Нужен, чтобы проверить, что связь с Telegram работает.
+ * Telegram-бот трекера целей. Принимает сообщения из Telegram, передаёт текст в
+ * {@link CommandHandler} и отправляет полученный ответ обратно в чат.
+ * (Раньше это был эхо-бот; теперь вместо повтора текста выполняются команды.)
  *
  * Как это устроено:
  * - Long polling: приложение само периодически спрашивает у Telegram «есть новые сообщения?».
@@ -29,21 +30,25 @@ import org.telegram.telegrambots.meta.generics.TelegramClient;
  */
 @Component
 @ConditionalOnProperty(name = "telegram.enabled", havingValue = "true", matchIfMissing = true)
-public class EchoBot implements SpringLongPollingBot, LongPollingSingleThreadUpdateConsumer {
+public class NotificatorBot implements SpringLongPollingBot, LongPollingSingleThreadUpdateConsumer {
 
-    private static final Logger log = LoggerFactory.getLogger(EchoBot.class);
+    private static final Logger log = LoggerFactory.getLogger(NotificatorBot.class);
 
     private final String botToken;
     private final TelegramClient telegramClient;
+    private final CommandHandler commandHandler;
 
     /**
      * Зависимости передаются через конструктор (внедрение зависимостей, DI): Spring сам
-     * подставит TelegramClient из {@link TelegramConfig}, а токен — из настроек.
-     * Так класс легко тестировать: в тесте можно передать «поддельный» клиент.
+     * подставит TelegramClient из {@link TelegramConfig}, обработчик команд и токен из настроек.
+     * Так класс легко тестировать: в тесте можно передать «поддельные» зависимости.
      */
-    public EchoBot(@Value("${telegram.botToken}") String botToken, TelegramClient telegramClient) {
+    public NotificatorBot(@Value("${telegram.botToken}") String botToken,
+                          TelegramClient telegramClient,
+                          CommandHandler commandHandler) {
         this.botToken = botToken;
         this.telegramClient = telegramClient;
+        this.commandHandler = commandHandler;
     }
 
     /** Токен нужен стартеру, чтобы подключиться к Telegram. */
@@ -59,19 +64,28 @@ public class EchoBot implements SpringLongPollingBot, LongPollingSingleThreadUpd
     }
 
     /**
-     * Вызывается на каждое новое обновление. Если пришло текстовое сообщение,
-     * отправляем в тот же чат тот же текст. Всё остальное (стикеры, фото, нажатия кнопок)
+     * Вызывается на каждое новое обновление. Если пришло текстовое сообщение, выполняем его
+     * как команду и отправляем ответ. Всё остальное (стикеры, фото, нажатия кнопок)
      * пока игнорируем.
      */
     @Override
     public void consume(Update update) {
         if (update.hasMessage() && update.getMessage().hasText()) {
             long chatId = update.getMessage().getChatId();
-            String text = update.getMessage().getText();
+
+            String answer;
+            try {
+                answer = commandHandler.handle(chatId, update.getMessage().getText());
+            } catch (RuntimeException e) {
+                // Неожиданная ошибка (например, БД недоступна): сообщаем пользователю и
+                // логируем, но не роняем бота.
+                log.error("Ошибка при обработке сообщения из чата {}", chatId, e);
+                answer = "Что-то пошло не так, попробуй ещё раз позже.";
+            }
 
             SendMessage reply = SendMessage.builder()
                     .chatId(chatId)
-                    .text(text)
+                    .text(answer)
                     .build();
             try {
                 telegramClient.execute(reply);

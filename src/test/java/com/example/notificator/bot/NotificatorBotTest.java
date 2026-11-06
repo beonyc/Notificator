@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,28 +18,31 @@ import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 /**
- * Юнит-тесты эхо-бота. Настоящий Telegram не нужен: клиент заменён на мок (Mockito) —
- * «пустышку», у которой можно проверить, какие методы и с какими аргументами вызвали.
+ * Юнит-тесты бота. Telegram и обработчик команд заменены моками (Mockito) —
+ * «пустышками», у которых можно задать ответы и проверить вызовы.
  */
-class EchoBotTest {
+class NotificatorBotTest {
 
     private TelegramClient client;
-    private EchoBot bot;
+    private CommandHandler handler;
+    private NotificatorBot bot;
 
     @BeforeEach
     void setUp() {
         client = mock(TelegramClient.class);
-        bot = new EchoBot("test-token", client);
+        handler = mock(CommandHandler.class);
+        bot = new NotificatorBot("test-token", client, handler);
     }
 
     @Test
-    void repliesWithSameTextToSameChat() throws TelegramApiException {
-        bot.consume(updateWithText(12345L, "Привет"));
+    void sendsHandlerAnswerToSameChat() throws TelegramApiException {
+        when(handler.handle(12345L, "/today")).thenReturn("Ответ");
 
-        ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
-        verify(client).execute(captor.capture());
-        assertEquals("Привет", captor.getValue().getText());
-        assertEquals("12345", captor.getValue().getChatId());
+        bot.consume(updateWithText(12345L, "/today"));
+
+        SendMessage sent = captureSent();
+        assertEquals("Ответ", sent.getText());
+        assertEquals("12345", sent.getChatId());
     }
 
     @Test
@@ -49,8 +53,23 @@ class EchoBotTest {
     }
 
     @Test
+    void tellsUserWhenHandlerFails() throws TelegramApiException {
+        when(handler.handle(1L, "/today")).thenThrow(new IllegalStateException("БД недоступна"));
+
+        bot.consume(updateWithText(1L, "/today"));
+
+        assertEquals("Что-то пошло не так, попробуй ещё раз позже.", captureSent().getText());
+    }
+
+    @Test
     void returnsTokenForStarter() {
         assertEquals("test-token", bot.getBotToken());
+    }
+
+    private SendMessage captureSent() throws TelegramApiException {
+        ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
+        verify(client).execute(captor.capture());
+        return captor.getValue();
     }
 
     /** Собирает входящее обновление с текстовым сообщением. */
