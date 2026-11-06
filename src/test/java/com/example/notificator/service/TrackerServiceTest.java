@@ -188,6 +188,58 @@ class TrackerServiceTest {
     }
 
     @Test
+    void markAllDoneMarksOnlyNotDoneEntriesAndCountsThem() {
+        service.register(CHAT);
+        service.addTask(CHAT, "Читать");
+        service.addTask(CHAT, "Зарядка");
+        service.addTask(CHAT, "Сон");
+        service.markDone(CHAT, service.todayItems(CHAT).get(0).entryId()); // одно уже выполнено
+
+        assertEquals(2, service.markAllDone(CHAT));
+
+        assertTrue(service.todayItems(CHAT).stream().allMatch(TodayItem::done));
+        assertEquals(0, service.markAllDone(CHAT)); // повторно — нечего отмечать
+    }
+
+    @Test
+    void markAllDoneCreatesMissingEntriesAndDoesNotTouchOtherUsers() {
+        service.register(CHAT);
+        service.register(CHAT + 1);
+        User user = users.findByTelegramChatId(CHAT).orElseThrow();
+        tasks.save(new Task(user, "Добавлено вчера")); // отметки на сегодня ещё нет
+        service.addTask(CHAT + 1, "Чужое");
+
+        assertEquals(1, service.markAllDone(CHAT));
+
+        assertFalse(service.todayItems(CHAT + 1).get(0).done());
+    }
+
+    @Test
+    void removeAllTasksDeactivatesEverythingKeepsDoneHistoryAndOtherUsers() {
+        service.register(CHAT);
+        service.register(CHAT + 1);
+        service.addTask(CHAT, "Читать");
+        service.addTask(CHAT, "Зарядка");
+        service.addTask(CHAT + 1, "Чужое");
+        long doneEntryId = service.todayItems(CHAT).get(0).entryId();
+        service.markDone(CHAT, doneEntryId);
+
+        assertEquals(2, service.removeAllTasks(CHAT));
+
+        assertTrue(service.activeTasks(CHAT).isEmpty());
+        assertTrue(service.todayItems(CHAT).isEmpty());
+        assertTrue(entries.findById(doneEntryId).orElseThrow().isDone()); // история сохранена
+        assertEquals(1, service.activeTasks(CHAT + 1).size()); // чужие дела не тронуты
+        assertEquals(0, service.removeAllTasks(CHAT)); // повторно — удалять нечего
+    }
+
+    @Test
+    void unregisteredUserCannotBulkOperate() {
+        assertThrows(UserNotRegisteredException.class, () -> service.markAllDone(CHAT));
+        assertThrows(UserNotRegisteredException.class, () -> service.removeAllTasks(CHAT));
+    }
+
+    @Test
     void unregisteredUserCannotRemoveOrListTasks() {
         assertThrows(UserNotRegisteredException.class, () -> service.removeTask(CHAT, 1L));
         assertThrows(UserNotRegisteredException.class, () -> service.activeTasks(CHAT));

@@ -30,6 +30,14 @@ public class CommandHandler {
     /** Префикс callback-данных кнопки «удалить дело»: «rm:<id дела>». */
     static final String REMOVE_PREFIX = "rm:";
 
+    /** Кнопка «Выполнить все» под списком /today (показывается, если невыполненных дел два и больше). */
+    static final String DONE_ALL = "doneall";
+
+    /** Кнопка «Удалить все» под списком /remove (показывается, если дел два и больше) и шаги подтверждения. */
+    static final String REMOVE_ALL = "rmall";
+    static final String REMOVE_ALL_YES = "rmall:yes";
+    static final String REMOVE_ALL_NO = "rmall:no";
+
     private static final CallbackResponse UNKNOWN_ACTION = new CallbackResponse("Неизвестное действие", null);
 
     static final String HELP = """
@@ -80,6 +88,19 @@ public class CommandHandler {
             return UNKNOWN_ACTION;
         }
         try {
+            // Кнопки без id сравниваем целиком; они не пересекаются с префиксами «done:» и «rm:».
+            switch (data) {
+                case DONE_ALL:
+                    return markAllDone(chatId);
+                case REMOVE_ALL:
+                    return confirmRemoveAll(chatId);
+                case REMOVE_ALL_YES:
+                    return removeAll(chatId);
+                case REMOVE_ALL_NO:
+                    return new CallbackResponse("Отменено", remove(chatId));
+                default:
+                    break;
+            }
             if (data.startsWith(DONE_PREFIX)) {
                 Long entryId = parseId(data, DONE_PREFIX);
                 return entryId == null ? UNKNOWN_ACTION : markDone(chatId, entryId);
@@ -113,6 +134,34 @@ public class CommandHandler {
         };
         // Всегда показываем актуальный список: так сообщение с кнопками не устаревает.
         return new CallbackResponse(notice, today(chatId));
+    }
+
+    private CallbackResponse markAllDone(long chatId) {
+        int count = service.markAllDone(chatId);
+        String notice = count == 0 ? "Все дела уже выполнены" : "Выполнено дел: " + count + " ✅";
+        return new CallbackResponse(notice, today(chatId));
+    }
+
+    /**
+     * Удаление всех дел необратимо, поэтому сначала просим подтверждение
+     * (случайное нажатие не должно стирать весь список).
+     */
+    private CallbackResponse confirmRemoveAll(long chatId) {
+        int count = service.activeTasks(chatId).size();
+        if (count == 0) {
+            return new CallbackResponse("Дел для удаления нет", remove(chatId));
+        }
+        BotReply confirm = new BotReply(
+                "Удалить все дела (" + count + ")? Это нельзя отменить.",
+                List.of(new ReplyButton("🗑 Да, удалить все", REMOVE_ALL_YES),
+                        new ReplyButton("↩️ Отмена", REMOVE_ALL_NO)));
+        return new CallbackResponse(null, confirm);
+    }
+
+    private CallbackResponse removeAll(long chatId) {
+        int count = service.removeAllTasks(chatId);
+        String notice = count == 0 ? "Дел для удаления нет" : "Удалено дел: " + count;
+        return new CallbackResponse(notice, remove(chatId));
     }
 
     private CallbackResponse removeTask(long chatId, long taskId) {
@@ -162,6 +211,9 @@ public class CommandHandler {
                         DONE_PREFIX + item.entryId()));
             }
         }
+        if (buttons.size() >= 2) {
+            buttons.add(new ReplyButton("✅ Выполнить все", DONE_ALL));
+        }
         sb.append("\nВыполнено ").append(doneCount).append(" из ").append(items.size());
         if (buttons.isEmpty()) {
             sb.append("\nВсе дела выполнены, день закрыт 💪");
@@ -183,6 +235,9 @@ public class CommandHandler {
             buttons.add(new ReplyButton(
                     "🗑 " + (i + 1) + ". " + shorten(item.title()),
                     REMOVE_PREFIX + item.taskId()));
+        }
+        if (items.size() >= 2) {
+            buttons.add(new ReplyButton("🗑 Удалить все", REMOVE_ALL));
         }
         return new BotReply(sb.toString().stripTrailing(), buttons);
     }

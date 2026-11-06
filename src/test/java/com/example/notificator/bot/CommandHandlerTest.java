@@ -172,8 +172,89 @@ class CommandHandlerTest {
                 Какое дело убрать из списка?
                 1. Читать
                 2. Зарядка""", reply.text());
-        assertEquals(List.of(new ReplyButton("🗑 1. Читать", "rm:7"), new ReplyButton("🗑 2. Зарядка", "rm:8")),
-                reply.buttons());
+        assertEquals(List.of(new ReplyButton("🗑 1. Читать", "rm:7"), new ReplyButton("🗑 2. Зарядка", "rm:8"),
+                new ReplyButton("🗑 Удалить все", "rmall")), reply.buttons());
+    }
+
+    @Test
+    void removeAllButtonIsNotShownForSingleTask() {
+        when(service.activeTasks(CHAT)).thenReturn(List.of(new TaskItem(7, "Читать")));
+
+        assertEquals(List.of(new ReplyButton("🗑 1. Читать", "rm:7")), handler.handle(CHAT, "/remove").buttons());
+    }
+
+    @Test
+    void todayShowsDoneAllButtonWhenTwoOrMoreNotDone() {
+        when(service.todayItems(CHAT)).thenReturn(List.of(
+                new TodayItem(1, "Читать", false), new TodayItem(2, "Зарядка", false), new TodayItem(3, "Сон", true)));
+
+        List<ReplyButton> buttons = handler.handle(CHAT, "/today").buttons();
+
+        assertEquals(new ReplyButton("✅ Выполнить все", "doneall"), buttons.get(buttons.size() - 1));
+        assertEquals(3, buttons.size());
+    }
+
+    @Test
+    void todayHasNoDoneAllButtonWhenOnlyOneNotDone() {
+        when(service.todayItems(CHAT)).thenReturn(List.of(
+                new TodayItem(1, "Читать", false), new TodayItem(2, "Зарядка", true)));
+
+        assertEquals(1, handler.handle(CHAT, "/today").buttons().size());
+    }
+
+    @Test
+    void doneAllMarksEverythingAndRefreshesList() {
+        when(service.markAllDone(CHAT)).thenReturn(3);
+        when(service.todayItems(CHAT)).thenReturn(List.of(new TodayItem(1, "Читать", true)));
+
+        CallbackResponse response = handler.handleCallback(CHAT, "doneall");
+
+        verify(service).markAllDone(CHAT);
+        assertEquals("Выполнено дел: 3 ✅", response.notice());
+        assertTrue(response.view().buttons().isEmpty());
+    }
+
+    @Test
+    void doneAllWhenNothingToMarkSaysAllDone() {
+        when(service.markAllDone(CHAT)).thenReturn(0);
+        when(service.todayItems(CHAT)).thenReturn(List.of());
+
+        assertEquals("Все дела уже выполнены", handler.handleCallback(CHAT, "doneall").notice());
+    }
+
+    @Test
+    void removeAllAsksConfirmationAndDoesNotDeleteYet() {
+        when(service.activeTasks(CHAT)).thenReturn(List.of(new TaskItem(7, "Читать"), new TaskItem(8, "Зарядка")));
+
+        CallbackResponse response = handler.handleCallback(CHAT, "rmall");
+
+        verify(service, never()).removeAllTasks(anyLong());
+        assertTrue(response.view().text().startsWith("Удалить все дела (2)?"));
+        assertEquals(List.of(new ReplyButton("🗑 Да, удалить все", "rmall:yes"),
+                new ReplyButton("↩️ Отмена", "rmall:no")), response.view().buttons());
+    }
+
+    @Test
+    void removeAllConfirmedDeletesEverything() {
+        when(service.removeAllTasks(CHAT)).thenReturn(2);
+        when(service.activeTasks(CHAT)).thenReturn(List.of());
+
+        CallbackResponse response = handler.handleCallback(CHAT, "rmall:yes");
+
+        verify(service).removeAllTasks(CHAT);
+        assertEquals("Удалено дел: 2", response.notice());
+        assertTrue(response.view().text().startsWith("Дел для удаления нет"));
+    }
+
+    @Test
+    void removeAllCancelledKeepsTasksAndShowsListAgain() {
+        when(service.activeTasks(CHAT)).thenReturn(List.of(new TaskItem(7, "Читать"), new TaskItem(8, "Зарядка")));
+
+        CallbackResponse response = handler.handleCallback(CHAT, "rmall:no");
+
+        verify(service, never()).removeAllTasks(anyLong());
+        assertEquals("Отменено", response.notice());
+        assertTrue(response.view().text().startsWith("Какое дело убрать"));
     }
 
     @Test
