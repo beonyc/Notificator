@@ -281,7 +281,18 @@ public class CommandHandler {
 
     private String add(long chatId, String title) {
         if (title.isEmpty()) {
-            return "✍️ Напиши название дела: /add Читать 30 минут";
+            // Примеры в <code>: по нажатию Telegram копирует строку целиком, остаётся вставить и отправить.
+            // (Обычная команда /add в тексте при нажатии отправила бы пустой /add ещё раз.)
+            return """
+                    ✍️ <b>Напиши название дела после команды.</b>
+                    Например:
+
+                    <code>/add Читать 30 минут</code>
+                    <code>/add Сделать зарядку</code>
+                    <code>/add Выучить 10 английских слов</code>
+                    <code>/add Позвонить родителям</code>
+
+                    💡 Нажми на пример, чтобы скопировать, и измени под себя.""";
         }
         if (title.length() > MAX_TITLE_LENGTH) {
             return "⚠️ Слишком длинное название (максимум " + MAX_TITLE_LENGTH + " символов).";
