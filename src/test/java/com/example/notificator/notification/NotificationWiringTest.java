@@ -17,7 +17,8 @@ import org.springframework.boot.test.context.SpringBootTest;
  * читаются, цитаты загружаются при старте, сервис уведомлений работает с настоящей БД.
  * Telegram отключён.
  */
-@SpringBootTest(properties = {"telegram.enabled=false", "spring.datasource.url=jdbc:h2:mem:wiring"})
+@SpringBootTest(properties = {"telegram.enabled=false", "spring.datasource.url=jdbc:h2:mem:wiring",
+        "logging.file.name=build/test-logs/wiring.log"})
 class NotificationWiringTest {
 
     @Autowired

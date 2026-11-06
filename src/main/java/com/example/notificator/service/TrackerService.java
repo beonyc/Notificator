@@ -12,6 +12,8 @@ import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,6 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @Transactional
 public class TrackerService {
+
+    private static final Logger log = LoggerFactory.getLogger(TrackerService.class);
 
     private final UserRepository users;
     private final TaskRepository tasks;
@@ -48,9 +52,11 @@ public class TrackerService {
      */
     public boolean register(long chatId) {
         if (users.findByTelegramChatId(chatId).isPresent()) {
+            log.info("Регистрация: пользователь уже зарегистрирован");
             return false;
         }
-        users.save(new User(chatId));
+        User created = users.save(new User(chatId));
+        log.info("Регистрация: создан новый пользователь id={}", created.getId());
         return true;
     }
 
@@ -62,6 +68,7 @@ public class TrackerService {
         User user = findUser(chatId);
         Task task = tasks.save(new Task(user, title));
         entries.save(new TaskEntry(task, today(user)));
+        log.info("Добавлено дело id={} «{}»", task.getId(), title);
     }
 
     /**
@@ -73,11 +80,14 @@ public class TrackerService {
         LocalDate today = today(user);
 
         ensureTodayEntries(user, today);
-        return entries.findByTaskUserAndDate(user, today).stream()
+        List<TodayItem> items = entries.findByTaskUserAndDate(user, today).stream()
                 .filter(e -> e.getTask().isActive()) // выполненное, но потом удалённое дело не показываем
                 .sorted(Comparator.comparing(TaskEntry::getId)) // порядок добавления дел
                 .map(e -> new TodayItem(e.getId(), e.getTask().getTitle(), e.isDone()))
                 .toList();
+        log.debug("Список на сегодня ({}): дел {}, выполнено {}", today, items.size(),
+                items.stream().filter(TodayItem::done).count());
+        return items;
     }
 
     /**
@@ -94,16 +104,39 @@ public class TrackerService {
                 .filter(e -> e.getTask().getUser().getId().equals(user.getId()))
                 .orElse(null);
         if (entry == null) {
-            return MarkResult.NOT_FOUND;
+            return logged(entryId, MarkResult.NOT_FOUND);
         }
         if (!entry.getDate().equals(today(user))) {
-            return MarkResult.EXPIRED;
+            return logged(entryId, MarkResult.EXPIRED);
         }
         if (entry.isDone()) {
-            return MarkResult.ALREADY_DONE;
+            return logged(entryId, MarkResult.ALREADY_DONE);
         }
         entry.markDone();
+        log.info("Отметка выполнения id={} «{}»: {}", entryId, entry.getTask().getTitle(), MarkResult.DONE);
         return MarkResult.DONE;
+    }
+
+    /**
+     * Пишет в лог итог отметки выполнения. «Не найдено» и «просрочено» — предупреждение: так выглядят
+     * устаревшие или поддельные кнопки. «Уже выполнено» — обычное информационное сообщение (двойное нажатие).
+     */
+    private MarkResult logged(long entryId, MarkResult result) {
+        if (result == MarkResult.ALREADY_DONE) {
+            log.info("Отметка выполнения id={}: {}", entryId, result);
+        } else {
+            log.warn("Отметка выполнения id={}: {}", entryId, result);
+        }
+        return result;
+    }
+
+    private EditResult logged(long entryId, EditResult result, boolean done) {
+        if (result == EditResult.NOT_FOUND || result == EditResult.NOT_EDITABLE) {
+            log.warn("Исправление вчерашнего статуса id={} (нужно: {}): {}", entryId, done ? "выполнено" : "не выполнено", result);
+        } else {
+            log.info("Исправление вчерашнего статуса id={} (нужно: {}): {}", entryId, done ? "выполнено" : "не выполнено", result);
+        }
+        return result;
     }
 
     /**
@@ -122,20 +155,20 @@ public class TrackerService {
                 .filter(e -> e.getTask().getUser().getId().equals(user.getId()))
                 .orElse(null);
         if (entry == null) {
-            return EditResult.NOT_FOUND;
+            return logged(entryId, EditResult.NOT_FOUND, done);
         }
         if (!entry.getDate().equals(today(user).minusDays(1))) {
-            return EditResult.NOT_EDITABLE;
+            return logged(entryId, EditResult.NOT_EDITABLE, done);
         }
         if (entry.isDone() == done) {
-            return EditResult.UNCHANGED;
+            return logged(entryId, EditResult.UNCHANGED, done);
         }
         if (done) {
             entry.markDone();
-            return EditResult.MARKED_DONE;
+            return logged(entryId, EditResult.MARKED_DONE, true);
         }
         entry.markUndone();
-        return EditResult.MARKED_UNDONE;
+        return logged(entryId, EditResult.MARKED_UNDONE, false);
     }
 
     /**
@@ -152,6 +185,7 @@ public class TrackerService {
                 .filter(e -> e.getTask().isActive())
                 .toList();
         notDone.forEach(TaskEntry::markDone);
+        log.info("Отмечены все дела на сегодня: {}", notDone.size());
         return notDone.size();
     }
 
@@ -168,6 +202,7 @@ public class TrackerService {
 
         List<Task> active = tasks.findByUserAndActiveTrue(user);
         active.forEach(task -> deactivate(task, today));
+        log.info("Удалены все дела: {}", active.size());
         return active.size();
     }
 
@@ -190,13 +225,20 @@ public class TrackerService {
      */
     public Optional<String> removeTask(long chatId, long taskId) {
         User user = findUser(chatId);
-        return tasks.findById(taskId)
+        Optional<String> removed = tasks.findById(taskId)
                 .filter(t -> t.getUser().getId().equals(user.getId()))
                 .filter(Task::isActive)
                 .map(task -> {
                     deactivate(task, today(user));
                     return task.getTitle();
                 });
+        if (removed.isPresent()) {
+            log.info("Удалено дело id={} «{}»", taskId, removed.get());
+        } else {
+            // не найдено, чужое или уже удалено: так выглядит устаревшая или поддельная кнопка
+            log.warn("Удаление дела id={}: дело не найдено, чужое или уже удалено", taskId);
+        }
+        return removed;
     }
 
     /** Мягко удаляет дело: делает неактивным и стирает его невыполненную отметку за сегодня. */

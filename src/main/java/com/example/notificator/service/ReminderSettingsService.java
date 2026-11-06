@@ -10,6 +10,8 @@ import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,6 +25,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @Transactional
 public class ReminderSettingsService {
+
+    private static final Logger log = LoggerFactory.getLogger(ReminderSettingsService.class);
 
     /** Максимум напоминаний в день, чтобы бот не превратился в спам. */
     public static final int MAX_REMINDERS = 6;
@@ -60,6 +64,7 @@ public class ReminderSettingsService {
         user.setReminderTimes(normalized.stream().map(LocalTime::toString).collect(Collectors.joining(",")));
         user.setRemindersEnabled(true);
         markPastSlotsHandled(user);
+        log.info("Напоминания: заданы свои времена {} (всего {}), включены", user.getReminderTimes(), normalized.size());
     }
 
     /** Включает или выключает напоминания, не трогая сохранённые времена. */
@@ -67,6 +72,7 @@ public class ReminderSettingsService {
         User user = findUser(chatId);
         user.setRemindersEnabled(enabled);
         markPastSlotsHandled(user);
+        log.info("Напоминания: {}", enabled ? "включены" : "выключены");
     }
 
     /** Возвращает стандартные времена из настроек приложения и включает напоминания. */
@@ -75,6 +81,7 @@ public class ReminderSettingsService {
         user.setReminderTimes(null);
         user.setRemindersEnabled(true);
         markPastSlotsHandled(user);
+        log.info("Напоминания: возвращено стандартное время {}, включены", timesOf(user));
     }
 
     /**

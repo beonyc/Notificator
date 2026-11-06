@@ -16,6 +16,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +28,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @Transactional(readOnly = true)
 public class StatsService {
+
+    private static final Logger log = LoggerFactory.getLogger(StatsService.class);
 
     /** На сколько дней назад загружаем отметки: хватает на прошлую неделю и на длинную серию 100%. */
     private static final int LOOKBACK_DAYS = 60;
@@ -46,7 +50,11 @@ public class StatsService {
     public WeeklyStats currentWeek(long chatId) {
         User user = findUser(chatId);
         LocalDate today = today(user);
-        return forPeriod(user, mondayOf(today), today, true);
+        WeeklyStats stats = forPeriod(user, mondayOf(today), today, true);
+        log.info("Статистика недели {}–{}: выполнено {} из {} ({}%), оценка {}/100 «{}», серия {}",
+                stats.from(), stats.to(), stats.done(), stats.total(), stats.percent(),
+                stats.score(), stats.verdict(), stats.streak());
+        return stats;
     }
 
     private User findUser(long chatId) {
@@ -106,6 +114,18 @@ public class StatsService {
      */
     @Transactional
     public DayReport dayReport(long chatId, LocalDate date) {
+        DayReport report = buildDayReport(chatId, date);
+        if (report.status() == DayReport.Status.OK) {
+            log.info("Просмотр дня {}: дел {}{}{}", date, report.items().size(),
+                    report.today() ? ", сегодня" : "", report.editable() ? ", вчера (можно исправлять)" : "");
+        } else {
+            // будущий день или не текущая неделя: обычно устаревшая или поддельная кнопка
+            log.warn("Просмотр дня {} отклонён: {}", date, report.status());
+        }
+        return report;
+    }
+
+    private DayReport buildDayReport(long chatId, LocalDate date) {
         User user = findUser(chatId);
         LocalDate today = today(user);
         LocalDate monday = mondayOf(today);

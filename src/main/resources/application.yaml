@@ -10,6 +10,24 @@ spring:
     hibernate:
       # Hibernate сам создаёт и обновляет таблицы по сущностям (для боевого запуска — Flyway)
       ddl-auto: update
+logging:
+  level:
+    # INFO — шаги пользователя и бота; DEBUG — ещё и подробности (проверка уведомлений каждую минуту и т.п.)
+    com.example.notificator: INFO
+  # %X{chatId:--} — номер чата пользователя из MDC (см. LogContext); вне обработки чата выводится «-»
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [чат %X{chatId:--}] %-24.24logger{23} : %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [чат %X{chatId:--}] %-24.24logger{23} : %msg%n"
+  # Лог дублируется в файл (папка logs/ в .gitignore): историю шагов можно читать после остановки бота
+  file:
+    name: logs/notificator.log
+  charset:
+    file: UTF-8
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB     # файл делится по размеру...
+      max-history: 14         # ...хранится не больше 14 архивных файлов
+      total-size-cap: 200MB
 notifications:
   # Время считается по часовому поясу пользователя (User.timezone), а не сервера
   summary-time: "08:00"            # утренний итог вчерашнего дня

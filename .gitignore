@@ -46,3 +46,5 @@ data/
 .env
 application-local.yaml
 application-local.yml
+# Логи приложения (шаги пользователей и бота)
+logs/
