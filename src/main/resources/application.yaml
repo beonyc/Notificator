@@ -1,3 +1,7 @@
 spring:
   application:
-    name: demo
+    name: Notificator
+telegram:
+  # Токен берётся из переменной окружения TELEGRAM_BOT_TOKEN (в git не попадает).
+  # Значения по умолчанию нет намеренно: без переменной приложение не запустится.
+  botToken: ${TELEGRAM_BOT_TOKEN}
