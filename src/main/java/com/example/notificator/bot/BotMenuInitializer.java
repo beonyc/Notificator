@@ -31,6 +31,7 @@ public class BotMenuInitializer {
      * При добавлении новой команды в {@link CommandHandler} нужно добавить её и сюда.
      */
     static final List<BotCommand> COMMANDS = List.of(
+            new BotCommand("menu", "Главное меню"),
             new BotCommand("today", "Дела на сегодня"),
             new BotCommand("add", "Добавить дело"),
             new BotCommand("remove", "Убрать дело из списка"),

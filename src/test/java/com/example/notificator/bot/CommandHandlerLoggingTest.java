@@ -111,7 +111,7 @@ class CommandHandlerLoggingTest {
 
             assertEquals(3, log.messages().stream().filter(m -> m.contains("Жду от пользователя время")).count());
             assertTrue(log.contains("разбираю ответ как список времён"), log.messages().toString());
-            assertTrue(log.contains("ожидание времени напоминаний прекращено"), log.messages().toString());
+            assertTrue(log.contains("ожидание ввода прекращено"), log.messages().toString());
             assertTrue(log.contains("Ожидание времени напоминаний сброшено: пришла другая команда /today"),
                     log.messages().toString());
         }

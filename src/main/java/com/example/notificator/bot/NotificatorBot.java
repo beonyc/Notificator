@@ -2,6 +2,7 @@ package com.example.notificator.bot;
 
 import com.example.notificator.util.LogContext;
 import com.example.notificator.util.LogText;
+import java.util.ArrayList;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -128,7 +129,7 @@ public class NotificatorBot implements SpringLongPollingBot, LongPollingSingleTh
                 .chatId(chatId)
                 .text(reply.text())
                 .parseMode(HTML)
-                .replyMarkup(toMarkup(reply.buttons()))
+                .replyMarkup(toMarkup(reply))
                 .build();
         try {
             telegramClient.execute(message);
@@ -176,7 +177,7 @@ public class NotificatorBot implements SpringLongPollingBot, LongPollingSingleTh
                         .messageId(messageId)
                         .text(response.view().text())
                         .parseMode(HTML)
-                        .replyMarkup(toMarkup(response.view().buttons()))
+                        .replyMarkup(toMarkup(response.view()))
                         .build());
                 log.info("← сообщение {} обновлено (кнопок: {}): {}", messageId, response.view().buttons().size(),
                         LogText.oneLine(response.view().text()));
@@ -188,17 +189,28 @@ public class NotificatorBot implements SpringLongPollingBot, LongPollingSingleTh
     }
 
     /**
-     * Собирает клавиатуру Telegram из наших кнопок (по одной в строке).
+     * Собирает клавиатуру Telegram из наших кнопок (по {@code columns} кнопок в ряду).
      * Для пустого списка возвращает пустую клавиатуру: при редактировании сообщения
      * это убирает кнопки, а в новом сообщении ничего не показывает.
      */
-    private static InlineKeyboardMarkup toMarkup(List<ReplyButton> buttons) {
-        List<InlineKeyboardRow> rows = buttons.stream()
-                .map(b -> new InlineKeyboardRow(InlineKeyboardButton.builder()
+    static InlineKeyboardMarkup toMarkup(BotReply reply) {
+        List<ReplyButton> buttons = reply.buttons();
+        int columns = Math.max(1, reply.columns());
+        List<InlineKeyboardRow> rows = new ArrayList<>();
+        // Режем список кнопок на ряды по columns штук (последний ряд может быть короче).
+        for (int from = 0; from < buttons.size(); from += columns) {
+            InlineKeyboardRow row = new InlineKeyboardRow();
+            for (ReplyButton b : buttons.subList(from, Math.min(from + columns, buttons.size()))) {
+                InlineKeyboardButton.InlineKeyboardButtonBuilder<?, ?> button = InlineKeyboardButton.builder()
                         .text(b.text())
-                        .callbackData(b.callbackData())
-                        .build()))
-                .toList();
+                        .callbackData(b.callbackData());
+                if (b.style() != null) {
+                    button.style(b.style()); // цвет кнопки; без стиля поле вообще не отправляем
+                }
+                row.add(button.build());
+            }
+            rows.add(row);
+        }
         return InlineKeyboardMarkup.builder().keyboard(rows).build();
     }
 }

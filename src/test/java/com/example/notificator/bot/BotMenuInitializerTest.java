@@ -35,7 +35,7 @@ class BotMenuInitializerTest {
         ArgumentCaptor<SetMyCommands> captor = ArgumentCaptor.forClass(SetMyCommands.class);
         verify(client).execute(captor.capture());
         List<String> names = captor.getValue().getCommands().stream().map(BotCommand::getCommand).toList();
-        assertEquals(List.of("today", "add", "remove", "week", "reminders", "start"), names);
+        assertEquals(List.of("menu", "today", "add", "remove", "week", "reminders", "start"), names);
     }
 
     @Test
@@ -60,7 +60,7 @@ class BotMenuInitializerTest {
         CommandHandler handler = new CommandHandler(mock(TrackerService.class), reminderSettings, stats);
         for (BotCommand command : BotMenuInitializer.COMMANDS) {
             String text = handler.handle(1L, "/" + command.getCommand()).text();
-            assertTrue(!text.startsWith("🤔 Не понял"), "Команда /" + command.getCommand() + " не обрабатывается");
+            assertTrue(!text.startsWith("🤔 <b>Не понял"), "Команда /" + command.getCommand() + " не обрабатывается");
         }
     }
 

@@ -89,18 +89,29 @@ public class CommandHandler {
 
     private static final CallbackResponse UNKNOWN_ACTION = new CallbackResponse("Неизвестное действие", null);
 
-    /** Список команд для приветствия и подсказки. Текст с HTML-разметкой (&lt;b&gt;): бот шлёт всё с parse_mode=HTML. */
-    static final String HELP = """
-            <b>Что я умею:</b>
-            ➕ /add — добавить дело
-            📋 /today — дела на сегодня
-            🗑 /remove — убрать дело из списка
-            📊 /week — итоги недели и дела по дням
-            ⏰ /reminders — время напоминаний""";
+    /**
+     * Главное меню: кнопки пунктов и «🏠 В меню». Меню показывают /start, /menu и непонятный ввод;
+     * кнопка «🏠 В меню» есть под каждым экраном, чтобы всегда можно было вернуться.
+     */
+    static final String MENU = "menu";
+    static final String MENU_ADD = "add";
+    static final String MENU_TODAY = "today";
+    static final String MENU_REMOVE = "remove";
+    static final String MENU_REMINDERS = "reminders";
+
+    /** Кнопка возврата в главное меню, которая добавляется под каждый экран. */
+    static final ReplyButton MENU_BUTTON = new ReplyButton("🏠 В меню", MENU);
 
     private final TrackerService service;
     private final ReminderSettingsService reminderSettings;
     private final StatsService statsService;
+
+    /**
+     * Чаты, от которых бот ждёт название нового дела (после кнопки «➕ Добавить дело»): следующее обычное
+     * сообщение будет названием. Как и {@link #awaitingTimes}, хранится в памяти и сбрасывается при
+     * перезапуске бота или любом переходе по кнопкам/командам.
+     */
+    private final Set<Long> awaitingTitle = ConcurrentHashMap.newKeySet();
 
     /**
      * Чаты, от которых бот ждёт время напоминаний (после нажатия «Изменить время»).
@@ -142,24 +153,36 @@ public class CommandHandler {
                     log.info("Ожидание времени напоминаний сброшено: пришла другая команда {}", command);
                 }
             }
+            // То же для кнопки «➕ Добавить дело»: обычное сообщение — это название дела.
+            if (awaitingTitle.contains(chatId)) {
+                if (!text.trim().startsWith("/")) {
+                    log.info("Бот ждал название дела, добавляю дело из сообщения");
+                    return setTitleFromText(chatId, text.trim());
+                }
+                if (!command.equals("/cancel")) {
+                    awaitingTitle.remove(chatId);
+                    log.info("Ожидание названия дела сброшено: пришла другая команда {}", command);
+                }
+            }
             if (command.startsWith("/")) {
                 log.info("Команда {}{}", command, args.isEmpty() ? "" : " с аргументами «" + args + "»");
             }
             return switch (command) {
                 case "/cancel" -> {
-                    boolean wasWaiting = awaitingTimes.remove(chatId);
-                    log.info("Отмена: {}", wasWaiting ? "ожидание времени напоминаний прекращено" : "отменять было нечего");
-                    yield BotReply.text(wasWaiting ? "↩️ Отменено." : "🤷 Отменять нечего.");
+                    boolean wasWaiting = awaitingTimes.remove(chatId) | awaitingTitle.remove(chatId);
+                    log.info("Отмена: {}", wasWaiting ? "ожидание ввода прекращено" : "отменять было нечего");
+                    yield withMenu(BotReply.text(wasWaiting ? "↩️ Отменено." : "🤷 Отменять нечего."));
                 }
-                case "/start" -> BotReply.text(start(chatId));
-                case "/add" -> BotReply.text(add(chatId, args));
+                case "/start" -> start(chatId);
+                case "/menu" -> mainMenu("🏠 <b>Главное меню</b>\nВыбери действие:");
+                case "/add" -> add(chatId, args);
                 case "/today" -> today(chatId);
                 case "/remove" -> remove(chatId);
                 case "/reminders" -> reminders(chatId, args);
                 case "/week" -> weekReport(chatId);
                 default -> {
-                    log.info("Не понял ввод (не команда бота), показываю подсказку со списком команд");
-                    yield BotReply.text("🤔 Не понял.\n\n" + HELP);
+                    log.info("Не понял ввод (не команда бота), показываю главное меню");
+                    yield mainMenu("🤔 <b>Не понял.</b>\nВыбери действие в меню:");
                 }
             };
         } catch (UserNotRegisteredException e) {
@@ -174,6 +197,12 @@ public class CommandHandler {
      * @param data строка, заданная при создании кнопки, например «done:15»
      */
     public CallbackResponse handleCallback(long chatId, String data) {
+        // Любое нажатие кнопки означает «перешёл к другому экрану»: ожидание ввода (времени или названия)
+        // сбрасываем, иначе следующее обычное сообщение ушло бы не туда. Если нужная кнопка снова
+        // включает ожидание («Изменить время», «Добавить дело»), она сделает это ниже.
+        if (awaitingTimes.remove(chatId) | awaitingTitle.remove(chatId)) {
+            log.info("Ожидание ввода сброшено: нажата кнопка {}", data);
+        }
         CallbackResponse response = dispatchCallback(chatId, data);
         if (response == UNKNOWN_ACTION) {
             // Такого действия бот не создавал (или данные повреждены/подделаны) — предупреждение, а не ошибка.
@@ -189,6 +218,16 @@ public class CommandHandler {
         try {
             // Кнопки без id сравниваем целиком; они не пересекаются с префиксами «done:» и «rm:».
             switch (data) {
+                case MENU:
+                    return new CallbackResponse(null, mainMenu("🏠 <b>Главное меню</b>\nВыбери действие:"));
+                case MENU_ADD:
+                    return askForTitle(chatId);
+                case MENU_TODAY:
+                    return new CallbackResponse(null, today(chatId));
+                case MENU_REMOVE:
+                    return new CallbackResponse(null, remove(chatId));
+                case MENU_REMINDERS:
+                    return new CallbackResponse(null, remindersView(chatId, ""));
                 case DONE_ALL:
                     return markAllDone(chatId);
                 case REMOVE_ALL:
@@ -278,10 +317,10 @@ public class CommandHandler {
         if (count == 0) {
             return new CallbackResponse("Дел для удаления нет", remove(chatId));
         }
-        BotReply confirm = new BotReply(
+        BotReply confirm = withMenu(new BotReply(
                 "⚠️ <b>Удалить все дела (" + count + ")?</b>\nЭто нельзя отменить.",
-                List.of(new ReplyButton("🗑 Да, удалить все", REMOVE_ALL_YES),
-                        new ReplyButton("↩️ Отмена", REMOVE_ALL_NO)));
+                List.of(new ReplyButton("🗑 Да, удалить все", REMOVE_ALL_YES, ReplyButton.DANGER),
+                        new ReplyButton("↩️ Отмена", REMOVE_ALL_NO, ReplyButton.PRIMARY))));
         return new CallbackResponse(null, confirm);
     }
 
@@ -298,19 +337,43 @@ public class CommandHandler {
         return new CallbackResponse(notice, remove(chatId));
     }
 
-    private String start(long chatId) {
-        if (service.register(chatId)) {
-            return "👋 <b>Привет!</b> Я помогу не забивать на цели: ты ставишь дела на день, "
-                    + "я напоминаю и считаю статистику.\n\n" + HELP;
-        }
-        return "✅ Ты уже зарегистрирован.\n\n" + HELP;
+    /**
+     * Главное меню: пять пунктов по две кнопки в ряду. Сам является «домом», поэтому кнопки
+     * «🏠 В меню» в нём нет.
+     *
+     * @param intro заголовок над кнопками (HTML)
+     */
+    private static BotReply mainMenu(String intro) {
+        return new BotReply(intro, List.of(
+                new ReplyButton("➕ Добавить дело", MENU_ADD),
+                new ReplyButton("📋 Дела на сегодня", MENU_TODAY),
+                new ReplyButton("🗑 Убрать дело", MENU_REMOVE),
+                new ReplyButton("📊 Неделя", WEEK),
+                new ReplyButton("⏰ Напоминания", MENU_REMINDERS)), 2);
     }
 
-    private String add(long chatId, String title) {
+    /** Добавляет под экран кнопку «🏠 В меню», чтобы из любого места можно было вернуться. */
+    private static BotReply withMenu(BotReply reply) {
+        return reply.plusButton(MENU_BUTTON);
+    }
+
+    /** /start: приветствие и главное меню. Для нового пользователя — с коротким объяснением, что умеет бот. */
+    private BotReply start(long chatId) {
+        if (service.register(chatId)) {
+            return mainMenu("👋 <b>Привет!</b> Я помогу не забивать на цели: ты ставишь дела на день, "
+                    + "я напоминаю и считаю статистику.\n\n🏠 <b>Главное меню</b>\nВыбери действие:");
+        }
+        return mainMenu("✅ Ты уже зарегистрирован.\n\n🏠 <b>Главное меню</b>\nВыбери действие:");
+    }
+
+    /**
+     * Команда /add. С названием — добавляет дело; без — показывает примеры (в виде {@code <code>}:
+     * по нажатию Telegram копирует строку целиком, остаётся вставить и отправить; обычная команда /add
+     * в тексте при нажатии отправила бы пустой /add ещё раз).
+     */
+    private BotReply add(long chatId, String title) {
         if (title.isEmpty()) {
-            // Примеры в <code>: по нажатию Telegram копирует строку целиком, остаётся вставить и отправить.
-            // (Обычная команда /add в тексте при нажатии отправила бы пустой /add ещё раз.)
-            return """
+            return withMenu(BotReply.text("""
                     ✍️ <b>Напиши название дела после команды.</b>
                     Например:
 
@@ -319,20 +382,53 @@ public class CommandHandler {
                     <code>/add Выучить 10 английских слов</code>
                     <code>/add Позвонить родителям</code>
 
-                    💡 Нажми на пример, чтобы скопировать, и измени под себя.""";
+                    💡 Нажми на пример, чтобы скопировать, и измени под себя."""));
         }
-        if (title.length() > MAX_TITLE_LENGTH) {
-            return "⚠️ Слишком длинное название (максимум " + MAX_TITLE_LENGTH + " символов).";
-        }
-        service.addTask(chatId, title);
-        return "✅ Добавлено: <b>" + Html.escape(title) + "</b>";
+        return addTask(chatId, title);
     }
 
-    /** Список дел на сегодня; под ним — кнопка «✅» для каждого невыполненного дела. */
+    /** Проверяет название, добавляет дело и предлагает добавить ещё одно или вернуться в меню. */
+    private BotReply addTask(long chatId, String title) {
+        if (title.length() > MAX_TITLE_LENGTH) {
+            return withMenu(BotReply.text("⚠️ Слишком длинное название (максимум " + MAX_TITLE_LENGTH + " символов)."));
+        }
+        service.addTask(chatId, title);
+        return withMenu(new BotReply("✅ Добавлено: <b>" + Html.escape(title) + "</b>",
+                List.of(new ReplyButton("➕ Добавить ещё", MENU_ADD))));
+    }
+
+    /** Кнопка «➕ Добавить дело»: просим прислать название обычным сообщением и запоминаем, что ждём его. */
+    private CallbackResponse askForTitle(long chatId) {
+        service.activeTasks(chatId); // заодно проверяет, что пользователь зарегистрирован
+        awaitingTitle.add(chatId);
+        log.info("Жду от пользователя название нового дела (нажата «Добавить дело»)");
+        return new CallbackResponse("Жду название", withMenu(BotReply.text("""
+                ✍️ <b>Напиши название дела</b> следующим сообщением.
+                Например:
+
+                <code>Читать 30 минут</code>
+                <code>Сделать зарядку</code>
+                <code>Выучить 10 английских слов</code>
+
+                💡 Передумал — нажми «🏠 В меню».""")));
+    }
+
+    /** Режим ожидания названия: обычное сообщение — название дела. Слишком длинное — просим короче, ждём дальше. */
+    private BotReply setTitleFromText(long chatId, String title) {
+        if (title.length() > MAX_TITLE_LENGTH) {
+            return withMenu(BotReply.text("⚠️ Слишком длинное название (максимум " + MAX_TITLE_LENGTH
+                    + " символов).\n↩️ Попробуй покороче или нажми «🏠 В меню»."));
+        }
+        awaitingTitle.remove(chatId);
+        return addTask(chatId, title);
+    }
+
+    /** Список дел на сегодня; под ним — кнопка «✅» для каждого невыполненного дела и «🏠 В меню». */
     private BotReply today(long chatId) {
         List<TodayItem> items = service.todayItems(chatId);
         if (items.isEmpty()) {
-            return BotReply.text("📭 На сегодня дел нет.\nДобавь: /add Читать 30 минут");
+            return withMenu(new BotReply("📭 На сегодня дел нет.\nДобавь первое дело кнопкой ниже.",
+                    List.of(new ReplyButton("➕ Добавить дело", MENU_ADD))));
         }
         StringBuilder sb = new StringBuilder("📋 <b>Дела на сегодня</b>\n\n");
         List<ReplyButton> buttons = new ArrayList<>();
@@ -352,7 +448,7 @@ public class CommandHandler {
             }
         }
         if (buttons.size() >= 2) {
-            buttons.add(new ReplyButton("✅ Выполнить все", DONE_ALL));
+            buttons.add(new ReplyButton("✅ ВЫПОЛНИТЬ ВСЕ", DONE_ALL, ReplyButton.SUCCESS));
         }
         int percent = Visuals.percent(doneCount, items.size());
         sb.append('\n').append(Visuals.bar(percent)).append(' ').append(percent).append("%\n")
@@ -360,7 +456,7 @@ public class CommandHandler {
         if (buttons.isEmpty()) {
             sb.append("\n\n🎉 Все дела выполнены, день закрыт 💪");
         }
-        return new BotReply(sb.toString(), buttons);
+        return withMenu(new BotReply(sb.toString(), buttons));
     }
 
     /**
@@ -408,14 +504,14 @@ public class CommandHandler {
             int minute = m.matches() && m.group(2) != null ? Integer.parseInt(m.group(2)) : 0;
             if (hour < 0 || hour > 23 || minute > 59) {
                 // token — ввод пользователя, поэтому экранируем (иначе «<» сломает HTML-разметку)
-                return BotReply.text("⚠️ Не понял время «" + Html.escape(token)
-                        + "». Пример: <code>9:00 14:30 20:00</code>" + hint);
+                return withMenu(BotReply.text("⚠️ Не понял время «" + Html.escape(token)
+                        + "». Пример: <code>9:00 14:30 20:00</code>" + hint));
             }
             times.add(LocalTime.of(hour, minute));
         }
         if (times.stream().distinct().count() > ReminderSettingsService.MAX_REMINDERS) {
-            return BotReply.text("⚠️ Слишком много: максимум " + ReminderSettingsService.MAX_REMINDERS
-                    + " напоминаний в день." + hint);
+            return withMenu(BotReply.text("⚠️ Слишком много: максимум " + ReminderSettingsService.MAX_REMINDERS
+                    + " напоминаний в день." + hint));
         }
         reminderSettings.setTimes(chatId, times);
         awaitingTimes.remove(chatId);
@@ -433,7 +529,7 @@ public class CommandHandler {
                         + "Сколько времён — столько напоминаний в день (до " + ReminderSettingsService.MAX_REMINDERS
                         + "). Формат 24 часа, время по твоему часовому поясу (" + Html.escape(s.timezone()) + ").",
                 List.of(new ReplyButton("↩️ Отмена", REMINDERS_CANCEL)));
-        return new CallbackResponse("Жду время", prompt);
+        return new CallbackResponse("Жду время", withMenu(prompt));
     }
 
     /** Текущие настройки напоминаний и кнопки «включить/выключить» и «по умолчанию». */
@@ -461,7 +557,7 @@ public class CommandHandler {
         if (s.custom()) {
             buttons.add(new ReplyButton("↩️ По умолчанию", REMINDERS_DEFAULT));
         }
-        return new BotReply(sb.toString(), buttons);
+        return withMenu(new BotReply(sb.toString(), buttons));
     }
 
     /**
@@ -469,8 +565,8 @@ public class CommandHandler {
      * дел по дням: просмотр прошлых дней доступен только отсюда, отдельной команды для него нет.
      */
     private BotReply weekReport(long chatId) {
-        return new BotReply(ReportFormatter.format(statsService.currentWeek(chatId), false),
-                List.of(new ReplyButton("📅 Дела по дням", DAYS)));
+        return withMenu(new BotReply(ReportFormatter.format(statsService.currentWeek(chatId), false),
+                List.of(new ReplyButton("📅 Дела по дням", DAYS))));
     }
 
     /** Нажатие кнопки дня («day:2026-11-05»). Дата приходит от клиента, поэтому проверяется сервисом. */
@@ -547,8 +643,8 @@ public class CommandHandler {
             buttons.add(new ReplyButton(title, DAY_PREFIX + d.date()));
         }
         buttons.add(new ReplyButton("↩️ К отчёту", WEEK));
-        return new BotReply("📅 <b>Выбери день этой недели</b> (" + SHORT_DATE.format(week.monday()) + "–"
-                + SHORT_DATE.format(week.sunday()) + "):", buttons);
+        return withMenu(new BotReply("📅 <b>Выбери день этой недели</b> (" + SHORT_DATE.format(week.monday()) + "–"
+                + SHORT_DATE.format(week.sunday()) + "):", buttons));
     }
 
     /**
@@ -593,7 +689,7 @@ public class CommandHandler {
             }
         }
         buttons.add(new ReplyButton("↩️ К дням недели", DAYS));
-        return new BotReply(sb.toString(), buttons);
+        return withMenu(new BotReply(sb.toString(), buttons));
     }
 
     private static String capitalize(String s) {
@@ -604,7 +700,8 @@ public class CommandHandler {
     private BotReply remove(long chatId) {
         List<TaskItem> items = service.activeTasks(chatId);
         if (items.isEmpty()) {
-            return BotReply.text("📭 Дел для удаления нет.\nДобавь: /add Читать 30 минут");
+            return withMenu(new BotReply("📭 Дел для удаления нет.\nМожно добавить новое дело кнопкой ниже.",
+                    List.of(new ReplyButton("➕ Добавить дело", MENU_ADD))));
         }
         StringBuilder sb = new StringBuilder("🗑 <b>Какое дело убрать из списка?</b>\n\n");
         List<ReplyButton> buttons = new ArrayList<>();
@@ -616,9 +713,9 @@ public class CommandHandler {
                     REMOVE_PREFIX + item.taskId()));
         }
         if (items.size() >= 2) {
-            buttons.add(new ReplyButton("🗑 Удалить все", REMOVE_ALL));
+            buttons.add(new ReplyButton("⚠️ УДАЛИТЬ ВСЕ", REMOVE_ALL, ReplyButton.DANGER));
         }
-        return new BotReply(sb.toString().stripTrailing(), buttons);
+        return withMenu(new BotReply(sb.toString().stripTrailing(), buttons));
     }
 
     private static String shorten(String title) {
