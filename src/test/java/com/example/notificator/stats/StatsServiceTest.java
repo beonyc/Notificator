@@ -134,7 +134,44 @@ class StatsServiceTest {
         WeekOverview w = stats.weekOverview(CHAT);
 
         assertEquals(d(9), w.monday());
-        assertEquals(List.of(new DayStat(d(9), 0, 0)), w.days());
+        // в понедельник в список добавляется вчерашний день (воскресенье), чтобы его статусы можно было исправить
+        assertEquals(List.of(new DayStat(d(8), 0, 0), new DayStat(d(9), 0, 0)), w.days());
+    }
+
+    @Test
+    void weekOverviewOnMondayShowsSundayResults() {
+        clock.set("2026-11-08T09:00:00Z"); // воскресенье
+        tracker.addTask(CHAT, "А");
+        tracker.addTask(CHAT, "Б");
+        tracker.markDone(CHAT, tracker.todayItems(CHAT).get(0).entryId());
+        clock.set("2026-11-08T21:30:00Z"); // понедельник 00:30 по Москве
+
+        WeekOverview w = stats.weekOverview(CHAT);
+
+        assertEquals(new DayStat(d(8), 2, 1), w.days().get(0));
+    }
+
+    @Test
+    void onlyYesterdayIsMarkedEditable() {
+        prepareWeekUntilFriday(); // сегодня пятница 6.11, вчера четверг 5.11
+
+        assertTrue(stats.dayReport(CHAT, d(5)).editable());
+        assertFalse(stats.dayReport(CHAT, d(3)).editable()); // вторник
+        assertFalse(stats.dayReport(CHAT, d(6)).editable()); // сегодня
+    }
+
+    @Test
+    void onMondayYesterdaySundayIsViewableAndEditableButSaturdayIsNot() {
+        clock.set("2026-11-08T09:00:00Z"); // воскресенье: заводим дело
+        tracker.addTask(CHAT, "А");
+        clock.set("2026-11-08T21:30:00Z"); // понедельник 9.11, 00:30 по Москве
+
+        DayReport sunday = stats.dayReport(CHAT, d(8));
+
+        assertEquals(DayReport.Status.OK, sunday.status());
+        assertTrue(sunday.editable());
+        assertEquals(1, sunday.items().size());
+        assertEquals(DayReport.Status.OUT_OF_WEEK, stats.dayReport(CHAT, d(7)).status()); // суббота — уже нельзя
     }
 
     @Test

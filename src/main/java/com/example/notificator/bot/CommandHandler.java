@@ -1,5 +1,6 @@
 package com.example.notificator.bot;
 
+import com.example.notificator.service.EditResult;
 import com.example.notificator.service.MarkResult;
 import com.example.notificator.service.ReminderSettings;
 import com.example.notificator.service.ReminderSettingsService;
@@ -70,6 +71,9 @@ public class CommandHandler {
     static final String DAYS = "days";
     static final String WEEK = "week";
     static final String DAY_PREFIX = "day:";
+
+    /** Префикс кнопки исправления статуса вчерашнего дела: «yd:<день>:<id отметки>:<1 — выполнено, 0 — нет>». */
+    static final String EDIT_PREFIX = "yd:";
 
     private static final DateTimeFormatter SHORT_DATE = DateTimeFormatter.ofPattern("dd.MM");
     private static final Locale RU = Locale.forLanguageTag("ru");
@@ -187,6 +191,9 @@ public class CommandHandler {
                     return new CallbackResponse("Время сброшено", remindersView(chatId, ""));
                 default:
                     break;
+            }
+            if (data.startsWith(EDIT_PREFIX)) {
+                return editYesterday(chatId, data);
             }
             if (data.startsWith(DAY_PREFIX)) {
                 return showDay(chatId, data.substring(DAY_PREFIX.length()));
@@ -424,12 +431,47 @@ public class CommandHandler {
         } catch (DateTimeParseException e) {
             return UNKNOWN_ACTION;
         }
+        return showDay(chatId, date);
+    }
+
+    private CallbackResponse showDay(long chatId, LocalDate date) {
         DayReport report = statsService.dayReport(chatId, date);
         if (report.status() == DayReport.Status.OK) {
             return new CallbackResponse(null, dayView(report));
         }
         return new CallbackResponse(dayError(report.status(), statsService.weekOverview(chatId)),
                 daysPicker(chatId));
+    }
+
+    /**
+     * Нажатие кнопки исправления статуса вчерашнего дела: «yd:2026-11-06:15:1» — день, id отметки и желаемый
+     * статус (1 — выполнено, 0 — не выполнено). Данные приходят от клиента: любые отклонения от формата
+     * игнорируются, а права и «вчера ли это» проверяет сервис.
+     */
+    private CallbackResponse editYesterday(long chatId, String data) {
+        String[] parts = data.split(":");
+        if (parts.length != 4 || !(parts[3].equals("0") || parts[3].equals("1"))) {
+            return UNKNOWN_ACTION;
+        }
+        LocalDate date;
+        long entryId;
+        try {
+            date = LocalDate.parse(parts[1]);
+            entryId = Long.parseLong(parts[2]);
+        } catch (DateTimeParseException | NumberFormatException e) {
+            return UNKNOWN_ACTION;
+        }
+
+        EditResult result = service.setYesterdayDone(chatId, entryId, parts[3].equals("1"));
+        String notice = switch (result) {
+            case MARKED_DONE -> "Отмечено ✅";
+            case MARKED_UNDONE -> "Отметка снята";
+            case UNCHANGED -> "Статус уже такой";
+            case NOT_EDITABLE -> "Исправлять можно только вчерашний день";
+            case NOT_FOUND -> "Дело не найдено";
+        };
+        // Всегда показываем актуальный список дня, чтобы сообщение не устаревало.
+        return new CallbackResponse(notice, showDay(chatId, date).view());
     }
 
     private static String dayError(DayReport.Status status, WeekOverview week) {
@@ -449,7 +491,8 @@ public class CommandHandler {
         for (DayStat d : week.days()) {
             String title = capitalize(d.date().getDayOfWeek().getDisplayName(TextStyle.SHORT, RU))
                     + " " + SHORT_DATE.format(d.date())
-                    + (d.date().equals(week.today()) ? " (сегодня)" : "")
+                    + (d.date().equals(week.today()) ? " (сегодня)"
+                            : d.date().equals(week.today().minusDays(1)) ? " (вчера)" : "")
                     + " · " + (d.total() == 0 ? "дел нет" : d.done() + " из " + d.total());
             buttons.add(new ReplyButton(title, DAY_PREFIX + d.date()));
         }
@@ -465,7 +508,8 @@ public class CommandHandler {
     private BotReply dayView(DayReport report) {
         String name = capitalize(report.date().getDayOfWeek().getDisplayName(TextStyle.FULL, RU));
         StringBuilder sb = new StringBuilder("📅 ").append(name).append(", ")
-                .append(SHORT_DATE.format(report.date())).append(report.today() ? " (сегодня)" : "").append('\n');
+                .append(SHORT_DATE.format(report.date()))
+                .append(report.today() ? " (сегодня)" : report.editable() ? " (вчера)" : "").append('\n');
 
         List<TodayItem> items = report.items();
         if (items.isEmpty()) {
@@ -485,7 +529,19 @@ public class CommandHandler {
         if (report.today()) {
             sb.append("\nОтмечать дела: /today");
         }
-        return new BotReply(sb.toString(), List.of(new ReplyButton("↩️ К дням недели", DAYS)));
+
+        List<ReplyButton> buttons = new ArrayList<>();
+        if (report.editable() && !items.isEmpty()) {
+            // Вчерашний день ещё можно исправить: кнопка на каждое дело меняет его статус на противоположный.
+            sb.append("\n\nНе успел вчера? Нажми на дело ниже, чтобы изменить его статус.");
+            for (TodayItem item : items) {
+                buttons.add(new ReplyButton(
+                        (item.done() ? "↩️ Снять: " : "✅ Отметить: ") + shorten(item.title()),
+                        EDIT_PREFIX + report.date() + ":" + item.entryId() + ":" + (item.done() ? "0" : "1")));
+            }
+        }
+        buttons.add(new ReplyButton("↩️ К дням недели", DAYS));
+        return new BotReply(sb.toString(), buttons);
     }
 
     private static String capitalize(String s) {
