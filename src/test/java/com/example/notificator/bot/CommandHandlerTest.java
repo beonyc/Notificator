@@ -14,7 +14,9 @@ import com.example.notificator.service.MarkResult;
 import com.example.notificator.service.TodayItem;
 import com.example.notificator.service.TrackerService;
 import com.example.notificator.service.UserNotRegisteredException;
+import com.example.notificator.service.TaskItem;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -158,6 +160,56 @@ class CommandHandlerTest {
             assertNull(response.view());
         }
         verify(service, never()).markDone(anyLong(), anyLong());
+    }
+
+    @Test
+    void removeShowsActiveTasksWithDeleteButtons() {
+        when(service.activeTasks(CHAT)).thenReturn(List.of(new TaskItem(7, "Читать"), new TaskItem(8, "Зарядка")));
+
+        BotReply reply = handler.handle(CHAT, "/remove");
+
+        assertEquals("""
+                Какое дело убрать из списка?
+                1. Читать
+                2. Зарядка""", reply.text());
+        assertEquals(List.of(new ReplyButton("🗑 1. Читать", "rm:7"), new ReplyButton("🗑 2. Зарядка", "rm:8")),
+                reply.buttons());
+    }
+
+    @Test
+    void removeWithNoTasksSaysNothingToRemove() {
+        when(service.activeTasks(CHAT)).thenReturn(List.of());
+
+        BotReply reply = handler.handle(CHAT, "/remove");
+
+        assertTrue(reply.text().startsWith("Дел для удаления нет"));
+        assertTrue(reply.buttons().isEmpty());
+    }
+
+    @Test
+    void removeButtonDeletesTaskAndReturnsRefreshedList() {
+        when(service.removeTask(CHAT, 7L)).thenReturn(Optional.of("Читать"));
+        when(service.activeTasks(CHAT)).thenReturn(List.of(new TaskItem(8, "Зарядка")));
+
+        CallbackResponse response = handler.handleCallback(CHAT, "rm:7");
+
+        verify(service).removeTask(CHAT, 7L);
+        assertEquals("Удалено: Читать", response.notice());
+        assertEquals(List.of(new ReplyButton("🗑 1. Зарядка", "rm:8")), response.view().buttons());
+    }
+
+    @Test
+    void removeButtonForMissingTaskSaysNotFound() {
+        when(service.removeTask(CHAT, 7L)).thenReturn(Optional.empty());
+        when(service.activeTasks(CHAT)).thenReturn(List.of());
+
+        assertEquals("Дело не найдено", handler.handleCallback(CHAT, "rm:7").notice());
+    }
+
+    @Test
+    void garbageRemoveCallbackIsIgnored() {
+        assertEquals("Неизвестное действие", handler.handleCallback(CHAT, "rm:abc").notice());
+        verify(service, never()).removeTask(anyLong(), anyLong());
     }
 
     @Test

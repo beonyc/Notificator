@@ -11,6 +11,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -77,6 +78,7 @@ public class TrackerService {
             }
         }
         return entries.findByTaskUserAndDate(user, today).stream()
+                .filter(e -> e.getTask().isActive()) // выполненное, но потом удалённое дело не показываем
                 .sorted(Comparator.comparing(TaskEntry::getId)) // порядок добавления дел
                 .map(e -> new TodayItem(e.getId(), e.getTask().getTitle(), e.isDone()))
                 .toList();
@@ -106,6 +108,35 @@ public class TrackerService {
         }
         entry.markDone();
         return MarkResult.DONE;
+    }
+
+    /** Активные дела пользователя в порядке добавления (список для /remove). */
+    public List<TaskItem> activeTasks(long chatId) {
+        return tasks.findByUserAndActiveTrue(findUser(chatId)).stream()
+                .sorted(Comparator.comparing(Task::getId))
+                .map(t -> new TaskItem(t.getId(), t.getTitle()))
+                .toList();
+    }
+
+    /**
+     * Удаляет дело (команда /remove). Это «мягкое удаление»: дело становится неактивным и больше
+     * не попадает в списки и новые дни, но строка и выполненные отметки остаются в БД —
+     * чтобы не искажалась статистика за прошлые дни. Невыполненная отметка на сегодня удаляется,
+     * иначе удалённое дело считалось бы проваленным в итоге дня.
+     * Дело должно принадлежать пользователю (callback-данные можно подделать).
+     *
+     * @return название удалённого дела; пусто, если дело не найдено, чужое или уже удалено
+     */
+    public Optional<String> removeTask(long chatId, long taskId) {
+        User user = findUser(chatId);
+        return tasks.findById(taskId)
+                .filter(t -> t.getUser().getId().equals(user.getId()))
+                .filter(Task::isActive)
+                .map(task -> {
+                    task.setActive(false);
+                    entries.deleteByTaskAndDateAndDoneFalse(task, today(user));
+                    return task.getTitle();
+                });
     }
 
     private User findUser(long chatId) {

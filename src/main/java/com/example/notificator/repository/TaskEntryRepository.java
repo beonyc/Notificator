@@ -23,6 +23,12 @@ public interface TaskEntryRepository extends JpaRepository<TaskEntry, Long> {
     /** Отметки пользователя за период (включительно) — для недельной статистики. */
     List<TaskEntry> findByTaskUserAndDateBetween(User user, LocalDate from, LocalDate to);
 
+    /**
+     * Удаляет невыполненную отметку дела за день (при удалении дела). Выполненные отметки
+     * не трогаем: они остаются в истории для статистики. Метод вызывать внутри транзакции.
+     */
+    void deleteByTaskAndDateAndDoneFalse(Task task, LocalDate date);
+
     /** Есть ли уже отметка по делу за день (чтобы не создать дубликат). */
     Optional<TaskEntry> findByTaskAndDate(Task task, LocalDate date);
 }
