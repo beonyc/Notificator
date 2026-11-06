@@ -1,12 +1,18 @@
 package com.example.notificator.bot;
 
 import com.example.notificator.service.MarkResult;
+import com.example.notificator.service.ReminderSettings;
+import com.example.notificator.service.ReminderSettingsService;
 import com.example.notificator.service.TaskItem;
 import com.example.notificator.service.TodayItem;
 import com.example.notificator.service.TrackerService;
 import com.example.notificator.service.UserNotRegisteredException;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 
 /**
@@ -38,18 +44,29 @@ public class CommandHandler {
     static final String REMOVE_ALL_YES = "rmall:yes";
     static final String REMOVE_ALL_NO = "rmall:no";
 
+    /** Кнопки настроек напоминаний под сообщением /reminders. */
+    static final String REMINDERS_ON = "rem:on";
+    static final String REMINDERS_OFF = "rem:off";
+    static final String REMINDERS_DEFAULT = "rem:default";
+
+    /** Время в команде /reminders: «9», «9:00», «09.30» (час 0–23, минуты 0–59 проверяются отдельно). */
+    private static final Pattern TIME = Pattern.compile("^(\\d{1,2})(?:[:.](\\d{2}))?$");
+
     private static final CallbackResponse UNKNOWN_ACTION = new CallbackResponse("Неизвестное действие", null);
 
     static final String HELP = """
             Команды:
             /add Читать 30 минут — добавить дело
             /today — дела на сегодня (с кнопками «выполнено»)
-            /remove — убрать дело из списка""";
+            /remove — убрать дело из списка
+            /reminders — время напоминаний, выключить или включить""";
 
     private final TrackerService service;
+    private final ReminderSettingsService reminderSettings;
 
-    public CommandHandler(TrackerService service) {
+    public CommandHandler(TrackerService service, ReminderSettingsService reminderSettings) {
         this.service = service;
+        this.reminderSettings = reminderSettings;
     }
 
     /**
@@ -71,6 +88,7 @@ public class CommandHandler {
                 case "/add" -> BotReply.text(add(chatId, args));
                 case "/today" -> today(chatId);
                 case "/remove" -> remove(chatId);
+                case "/reminders" -> reminders(chatId, args);
                 default -> BotReply.text("Не понял. " + HELP);
             };
         } catch (UserNotRegisteredException e) {
@@ -98,6 +116,15 @@ public class CommandHandler {
                     return removeAll(chatId);
                 case REMOVE_ALL_NO:
                     return new CallbackResponse("Отменено", remove(chatId));
+                case REMINDERS_ON:
+                    reminderSettings.setEnabled(chatId, true);
+                    return new CallbackResponse("Напоминания включены", remindersView(chatId, ""));
+                case REMINDERS_OFF:
+                    reminderSettings.setEnabled(chatId, false);
+                    return new CallbackResponse("Напоминания выключены", remindersView(chatId, ""));
+                case REMINDERS_DEFAULT:
+                    reminderSettings.resetToDefault(chatId);
+                    return new CallbackResponse("Время сброшено", remindersView(chatId, ""));
                 default:
                     break;
             }
@@ -217,6 +244,76 @@ public class CommandHandler {
         sb.append("\nВыполнено ").append(doneCount).append(" из ").append(items.size());
         if (buttons.isEmpty()) {
             sb.append("\nВсе дела выполнены, день закрыт 💪");
+        }
+        return new BotReply(sb.toString(), buttons);
+    }
+
+    /**
+     * Команда /reminders. Без аргументов показывает настройки; с аргументами меняет их:
+     * «off» — выключить, «on» — включить, «default» — стандартные времена,
+     * список времён («9:00 14:30 20:00») — свои напоминания (сколько времён, столько напоминаний в день).
+     */
+    private BotReply reminders(long chatId, String args) {
+        if (args.isEmpty()) {
+            return remindersView(chatId, "");
+        }
+        switch (args.toLowerCase()) {
+            case "off", "выкл", "выключить" -> {
+                reminderSettings.setEnabled(chatId, false);
+                return remindersView(chatId, "Готово, напоминания выключены.\n\n");
+            }
+            case "on", "вкл", "включить" -> {
+                reminderSettings.setEnabled(chatId, true);
+                return remindersView(chatId, "Готово, напоминания включены.\n\n");
+            }
+            case "default", "сброс" -> {
+                reminderSettings.resetToDefault(chatId);
+                return remindersView(chatId, "Готово, вернул стандартное время.\n\n");
+            }
+            default -> {
+                // дальше разбираем как список времён
+            }
+        }
+
+        List<LocalTime> times = new ArrayList<>();
+        for (String token : args.split("[\\s,;]+")) {
+            Matcher m = TIME.matcher(token);
+            int hour = m.matches() ? Integer.parseInt(m.group(1)) : -1;
+            int minute = m.matches() && m.group(2) != null ? Integer.parseInt(m.group(2)) : 0;
+            if (hour < 0 || hour > 23 || minute > 59) {
+                return BotReply.text("Не понял время «" + token + "». Пример: /reminders 9:00 14:30 20:00");
+            }
+            times.add(LocalTime.of(hour, minute));
+        }
+        if (times.stream().distinct().count() > ReminderSettingsService.MAX_REMINDERS) {
+            return BotReply.text("Слишком много: максимум " + ReminderSettingsService.MAX_REMINDERS
+                    + " напоминаний в день.");
+        }
+        reminderSettings.setTimes(chatId, times);
+        return remindersView(chatId, "Готово, время напоминаний обновлено.\n\n");
+    }
+
+    /** Текущие настройки напоминаний и кнопки «включить/выключить» и «по умолчанию». */
+    private BotReply remindersView(long chatId, String prefix) {
+        ReminderSettings s = reminderSettings.get(chatId);
+        String times = s.times().stream().map(LocalTime::toString).collect(Collectors.joining(", "));
+
+        StringBuilder sb = new StringBuilder(prefix);
+        if (s.enabled()) {
+            sb.append("🔔 Напоминания: ").append(times).append(s.custom() ? "" : " (по умолчанию)");
+        } else {
+            sb.append("🔕 Напоминания выключены.\nСохранённое время: ").append(times);
+        }
+        sb.append("\nВремя по твоему часовому поясу: ").append(s.timezone()).append('.');
+        sb.append("\n\nЗадать своё время (до ").append(ReminderSettingsService.MAX_REMINDERS)
+                .append(" штук, сколько времён — столько напоминаний):\n/reminders 9:00 14:30 20:00");
+
+        List<ReplyButton> buttons = new ArrayList<>();
+        buttons.add(s.enabled()
+                ? new ReplyButton("🔕 Выключить", REMINDERS_OFF)
+                : new ReplyButton("🔔 Включить", REMINDERS_ON));
+        if (s.custom()) {
+            buttons.add(new ReplyButton("↩️ По умолчанию", REMINDERS_DEFAULT));
         }
         return new BotReply(sb.toString(), buttons);
     }

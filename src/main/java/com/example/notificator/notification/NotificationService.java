@@ -7,6 +7,7 @@ import com.example.notificator.model.User;
 import com.example.notificator.repository.TaskEntryRepository;
 import com.example.notificator.repository.UserRepository;
 import com.example.notificator.service.QuoteService;
+import com.example.notificator.service.ReminderSettingsService;
 import com.example.notificator.service.TodayItem;
 import com.example.notificator.service.TrackerService;
 import java.time.Clock;
@@ -42,15 +43,18 @@ public class NotificationService {
     private final TaskEntryRepository entries;
     private final TrackerService tracker;
     private final QuoteService quotes;
+    private final ReminderSettingsService reminderSettings;
     private final NotificationProperties props;
     private final Clock clock;
 
     public NotificationService(UserRepository users, TaskEntryRepository entries, TrackerService tracker,
-                               QuoteService quotes, NotificationProperties props, Clock clock) {
+                               QuoteService quotes, ReminderSettingsService reminderSettings,
+                               NotificationProperties props, Clock clock) {
         this.users = users;
         this.entries = entries;
         this.tracker = tracker;
         this.quotes = quotes;
+        this.reminderSettings = reminderSettings;
         this.props = props;
         this.clock = clock;
     }
@@ -82,7 +86,8 @@ public class NotificationService {
         }
 
         // Берём последний наступивший слот напоминаний: более ранние уже неактуальны.
-        Optional<LocalDateTime> reminderSlot = props.reminderTimes().stream()
+        // Времена у каждого пользователя свои (или стандартные); если напоминания выключены — список пуст.
+        Optional<LocalDateTime> reminderSlot = reminderSettings.activeTimes(user).stream()
                 .sorted(Comparator.reverseOrder())
                 .map(date::atTime)
                 .filter(slot -> !now.isBefore(slot))

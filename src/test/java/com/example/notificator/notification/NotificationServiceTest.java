@@ -10,11 +10,13 @@ import com.example.notificator.model.User;
 import com.example.notificator.repository.QuoteRepository;
 import com.example.notificator.repository.UserRepository;
 import com.example.notificator.service.QuoteService;
+import com.example.notificator.service.ReminderSettingsService;
 import com.example.notificator.service.TodayItem;
 import com.example.notificator.service.TrackerService;
 import com.example.notificator.support.MutableClock;
 import com.example.notificator.support.NotificationTestConfig;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,7 +29,8 @@ import org.springframework.context.annotation.Import;
  * Даты: 7 ноября 2026, Москва = UTC+3 (08:00 МСК = 05:00 UTC, 13:00 = 10:00, 17:00 = 14:00).
  */
 @DataJpaTest
-@Import({NotificationTestConfig.class, TrackerService.class, QuoteService.class, NotificationService.class})
+@Import({NotificationTestConfig.class, TrackerService.class, QuoteService.class,
+        ReminderSettingsService.class, NotificationService.class})
 class NotificationServiceTest {
 
     private static final long CHAT = 100L;
@@ -47,6 +50,8 @@ class NotificationServiceTest {
     private NotificationService service;
     @Autowired
     private TrackerService tracker;
+    @Autowired
+    private ReminderSettingsService reminderSettings;
     @Autowired
     private UserRepository users;
     @Autowired
@@ -253,6 +258,107 @@ class NotificationServiceTest {
         assertTrue(text.contains("⬜ Дело 15"));
         assertFalse(text.contains("⬜ Дело 16"));
         assertTrue(text.contains("…и ещё 2"), text);
+    }
+
+    // ---------- Личные настройки напоминаний ----------
+
+    @Test
+    void remindersUseUsersOwnTimesInsteadOfDefaults() {
+        reminderSettings.setTimes(CHAT, List.of(LocalTime.of(15, 0), LocalTime.of(22, 0)));
+        clock.set(MSK_1200);
+        tracker.addTask(CHAT, "А");
+
+        clock.set(MSK_1300); // 13:00 — стандартное время, но у пользователя его больше нет
+        assertTrue(service.prepare(userId).isEmpty());
+
+        clock.set("2026-11-07T12:00:00Z"); // 15:00 МСК — своё время
+        PendingNotification n = service.prepare(userId).orElseThrow();
+        assertEquals(LocalDateTime.of(2026, 11, 7, 15, 0), n.slot());
+        assertTrue(n.text().contains("Ты ещё не сделал 1 из 1"), n.text());
+    }
+
+    @Test
+    void numberOfRemindersEqualsNumberOfUserTimes() {
+        reminderSettings.setTimes(CHAT, List.of(LocalTime.of(15, 0)));
+        clock.set(MSK_1200);
+        tracker.addTask(CHAT, "А");
+
+        clock.set("2026-11-07T12:00:00Z"); // 15:00 — единственное напоминание
+        PendingNotification only = service.prepare(userId).orElseThrow();
+        service.markHandled(only.userId(), only.kind(), only.slot());
+
+        clock.set(MSK_1700); // 17:00 и 21:00 больше не напоминают
+        assertTrue(service.prepare(userId).isEmpty());
+        clock.set("2026-11-07T18:00:00Z"); // 21:00
+        assertTrue(service.prepare(userId).isEmpty());
+    }
+
+    @Test
+    void disabledRemindersAreNotSentButSummaryStillIs() {
+        tasksDoneYesterday(2, 1);
+        reminderSettings.setEnabled(CHAT, false);
+
+        clock.set(MSK_0800);
+        PendingNotification summary = service.prepare(userId).orElseThrow();
+        assertEquals(NotificationKind.SUMMARY, summary.kind());
+        service.markHandled(summary.userId(), summary.kind(), summary.slot());
+
+        for (String time : new String[] {MSK_1300, MSK_1700, "2026-11-07T18:00:00Z"}) {
+            clock.set(time);
+            assertTrue(service.prepare(userId).isEmpty(), "напоминание в " + time);
+        }
+    }
+
+    @Test
+    void reEnablingBringsBackSavedCustomTimes() {
+        reminderSettings.setTimes(CHAT, List.of(LocalTime.of(15, 0)));
+        reminderSettings.setEnabled(CHAT, false);
+        reminderSettings.setEnabled(CHAT, true);
+        clock.set(MSK_1200);
+        tracker.addTask(CHAT, "А");
+
+        clock.set("2026-11-07T12:00:00Z");
+
+        assertEquals(LocalDateTime.of(2026, 11, 7, 15, 0), service.prepare(userId).orElseThrow().slot());
+    }
+
+    @Test
+    void resetToDefaultRestoresStandardTimes() {
+        reminderSettings.setTimes(CHAT, List.of(LocalTime.of(15, 0)));
+        reminderSettings.resetToDefault(CHAT);
+        clock.set(MSK_1200);
+        tracker.addTask(CHAT, "А");
+
+        clock.set(MSK_1300);
+
+        assertEquals(LocalDateTime.of(2026, 11, 7, 13, 0), service.prepare(userId).orElseThrow().slot());
+    }
+
+    @Test
+    void changingTimesDoesNotTriggerImmediateLateReminder() {
+        clock.set(MSK_1200);
+        tracker.addTask(CHAT, "А");
+
+        clock.set("2026-11-07T11:40:00Z"); // 14:40 МСК: пользователь ставит напоминание на 14:30
+        reminderSettings.setTimes(CHAT, List.of(LocalTime.of(14, 30)));
+
+        assertTrue(service.prepare(userId).isEmpty()); // не «с опозданием на 10 минут»
+    }
+
+    @Test
+    void remindersFollowUsersTimezoneForCustomTimes() {
+        tracker.register(CHAT + 1);
+        User vladivostok = users.findByTelegramChatId(CHAT + 1).orElseThrow();
+        vladivostok.setTimezone("Asia/Vladivostok"); // UTC+10
+        clock.set("2026-11-06T22:30:00Z"); // 08:30 у них — день уже начался
+        reminderSettings.setTimes(CHAT + 1, List.of(LocalTime.of(9, 0)));
+        tracker.addTask(CHAT + 1, "Утреннее");
+
+        clock.set("2026-11-06T23:00:00Z"); // 09:00 по Владивостоку
+
+        PendingNotification n = service.prepare(vladivostok.getId()).orElseThrow();
+        assertEquals(NotificationKind.REMINDER, n.kind());
+        assertEquals(LocalDateTime.of(2026, 11, 7, 9, 0), n.slot());
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.example.notificator.bot;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -11,6 +12,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.example.notificator.service.MarkResult;
+import com.example.notificator.service.ReminderSettings;
+import com.example.notificator.service.ReminderSettingsService;
+import java.time.LocalTime;
 import com.example.notificator.service.TodayItem;
 import com.example.notificator.service.TrackerService;
 import com.example.notificator.service.UserNotRegisteredException;
@@ -26,12 +30,14 @@ class CommandHandlerTest {
     private static final long CHAT = 42L;
 
     private TrackerService service;
+    private ReminderSettingsService reminders;
     private CommandHandler handler;
 
     @BeforeEach
     void setUp() {
         service = mock(TrackerService.class);
-        handler = new CommandHandler(service);
+        reminders = mock(ReminderSettingsService.class);
+        handler = new CommandHandler(service, reminders);
     }
 
     @Test
@@ -291,6 +297,123 @@ class CommandHandlerTest {
     void garbageRemoveCallbackIsIgnored() {
         assertEquals("Неизвестное действие", handler.handleCallback(CHAT, "rm:abc").notice());
         verify(service, never()).removeTask(anyLong(), anyLong());
+    }
+
+    // ---------- /reminders ----------
+
+    private static ReminderSettings settings(boolean enabled, boolean custom, LocalTime... times) {
+        return new ReminderSettings(enabled, List.of(times), custom, "Europe/Moscow");
+    }
+
+    @Test
+    void remindersShowsDefaultScheduleWithOffButton() {
+        when(reminders.get(CHAT)).thenReturn(settings(true, false, LocalTime.of(13, 0), LocalTime.of(17, 0)));
+
+        BotReply reply = handler.handle(CHAT, "/reminders");
+
+        assertTrue(reply.text().startsWith("🔔 Напоминания: 13:00, 17:00 (по умолчанию)"), reply.text());
+        assertTrue(reply.text().contains("Europe/Moscow"));
+        assertEquals(List.of(new ReplyButton("🔕 Выключить", "rem:off")), reply.buttons());
+    }
+
+    @Test
+    void remindersShowsCustomScheduleWithResetButton() {
+        when(reminders.get(CHAT)).thenReturn(settings(true, true, LocalTime.of(9, 30)));
+
+        BotReply reply = handler.handle(CHAT, "/reminders");
+
+        assertTrue(reply.text().startsWith("🔔 Напоминания: 09:30\n"), reply.text());
+        assertEquals(List.of(new ReplyButton("🔕 Выключить", "rem:off"),
+                new ReplyButton("↩️ По умолчанию", "rem:default")), reply.buttons());
+    }
+
+    @Test
+    void remindersWhenDisabledShowsOnButton() {
+        when(reminders.get(CHAT)).thenReturn(settings(false, false, LocalTime.of(13, 0)));
+
+        BotReply reply = handler.handle(CHAT, "/reminders");
+
+        assertTrue(reply.text().startsWith("🔕 Напоминания выключены."), reply.text());
+        assertTrue(reply.text().contains("Сохранённое время: 13:00"));
+        assertEquals(List.of(new ReplyButton("🔔 Включить", "rem:on")), reply.buttons());
+    }
+
+    @Test
+    void remindersSetsCustomTimesInDifferentFormats() {
+        when(reminders.get(CHAT)).thenReturn(settings(true, true, LocalTime.of(9, 0)));
+
+        BotReply reply = handler.handle(CHAT, "/reminders 9 14:30,20.15  7:05");
+
+        verify(reminders).setTimes(CHAT, List.of(LocalTime.of(9, 0), LocalTime.of(14, 30),
+                LocalTime.of(20, 15), LocalTime.of(7, 5)));
+        assertTrue(reply.text().startsWith("Готово, время напоминаний обновлено."), reply.text());
+    }
+
+    @Test
+    void remindersRejectsInvalidTimeWithoutChangingAnything() {
+        for (String bad : new String[] {"25:00", "9:60", "abc", "9:0", "-1"}) {
+            BotReply reply = handler.handle(CHAT, "/reminders 9:00 " + bad);
+
+            assertTrue(reply.text().startsWith("Не понял время «" + bad + "»"), reply.text());
+        }
+        verify(reminders, never()).setTimes(anyLong(), any());
+    }
+
+    @Test
+    void remindersRejectsTooManyTimes() {
+        BotReply reply = handler.handle(CHAT, "/reminders 8 9 10 11 12 13 14");
+
+        assertTrue(reply.text().startsWith("Слишком много: максимум 6"), reply.text());
+        verify(reminders, never()).setTimes(anyLong(), any());
+    }
+
+    @Test
+    void remindersDuplicateTimesAreNotCountedTwice() {
+        when(reminders.get(CHAT)).thenReturn(settings(true, true, LocalTime.of(8, 0)));
+
+        handler.handle(CHAT, "/reminders 8 8 8 8 8 8 8 8");
+
+        verify(reminders).setTimes(CHAT, List.of(LocalTime.of(8, 0), LocalTime.of(8, 0), LocalTime.of(8, 0),
+                LocalTime.of(8, 0), LocalTime.of(8, 0), LocalTime.of(8, 0), LocalTime.of(8, 0), LocalTime.of(8, 0)));
+    }
+
+    @Test
+    void remindersOffOnDefaultCommands() {
+        when(reminders.get(CHAT)).thenReturn(settings(false, false, LocalTime.of(13, 0)));
+
+        assertTrue(handler.handle(CHAT, "/reminders off").text().startsWith("Готово, напоминания выключены."));
+        assertTrue(handler.handle(CHAT, "/reminders ВЫКЛ").text().startsWith("Готово, напоминания выключены."));
+        assertTrue(handler.handle(CHAT, "/reminders on").text().startsWith("Готово, напоминания включены."));
+        assertTrue(handler.handle(CHAT, "/reminders default").text().startsWith("Готово, вернул стандартное"));
+
+        verify(reminders, org.mockito.Mockito.times(2)).setEnabled(CHAT, false);
+        verify(reminders).setEnabled(CHAT, true);
+        verify(reminders).resetToDefault(CHAT);
+    }
+
+    @Test
+    void reminderButtonsChangeSettingsAndRefreshView() {
+        when(reminders.get(CHAT)).thenReturn(settings(false, false, LocalTime.of(13, 0)));
+
+        CallbackResponse off = handler.handleCallback(CHAT, "rem:off");
+        CallbackResponse on = handler.handleCallback(CHAT, "rem:on");
+        CallbackResponse reset = handler.handleCallback(CHAT, "rem:default");
+
+        verify(reminders).setEnabled(CHAT, false);
+        verify(reminders).setEnabled(CHAT, true);
+        verify(reminders).resetToDefault(CHAT);
+        assertEquals("Напоминания выключены", off.notice());
+        assertEquals("Напоминания включены", on.notice());
+        assertEquals("Время сброшено", reset.notice());
+        assertTrue(off.view().text().contains("Напоминания"));
+    }
+
+    @Test
+    void remindersFromUnregisteredUserAsksToPressStart() {
+        when(reminders.get(CHAT)).thenThrow(new UserNotRegisteredException(CHAT));
+
+        assertEquals("Сначала нажми /start.", handler.handle(CHAT, "/reminders").text());
+        assertEquals("Сначала нажми /start", handler.handleCallback(CHAT, "rem:off").notice());
     }
 
     @Test
