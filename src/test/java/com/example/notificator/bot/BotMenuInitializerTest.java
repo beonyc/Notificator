@@ -11,7 +11,9 @@ import static org.mockito.Mockito.when;
 import com.example.notificator.service.ReminderSettings;
 import com.example.notificator.service.ReminderSettingsService;
 import com.example.notificator.service.TrackerService;
+import com.example.notificator.stats.DayStat;
 import com.example.notificator.stats.StatsService;
+import com.example.notificator.stats.WeekOverview;
 import com.example.notificator.stats.WeeklyStats;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -35,7 +37,7 @@ class BotMenuInitializerTest {
         ArgumentCaptor<SetMyCommands> captor = ArgumentCaptor.forClass(SetMyCommands.class);
         verify(client).execute(captor.capture());
         List<String> names = captor.getValue().getCommands().stream().map(BotCommand::getCommand).toList();
-        assertEquals(List.of("today", "add", "remove", "week", "reminders", "start"), names);
+        assertEquals(List.of("today", "add", "remove", "week", "day", "reminders", "start"), names);
     }
 
     @Test
@@ -47,6 +49,8 @@ class BotMenuInitializerTest {
         StatsService stats = mock(StatsService.class);
         when(stats.currentWeek(1L)).thenReturn(new WeeklyStats(LocalDate.of(2026, 11, 2), LocalDate.of(2026, 11, 7),
                 0, 0, 0, List.of(), List.of(), null, null, 0, null, 0, "Проленился"));
+        when(stats.weekOverview(1L)).thenReturn(new WeekOverview(LocalDate.of(2026, 11, 2),
+                LocalDate.of(2026, 11, 2), List.of(new DayStat(LocalDate.of(2026, 11, 2), 0, 0))));
         CommandHandler handler = new CommandHandler(mock(TrackerService.class), reminderSettings, stats);
         for (BotCommand command : BotMenuInitializer.COMMANDS) {
             String text = handler.handle(1L, "/" + command.getCommand()).text();

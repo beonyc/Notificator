@@ -1,6 +1,7 @@
 package com.example.notificator.bot;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -12,7 +13,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.example.notificator.service.MarkResult;
+import com.example.notificator.stats.DayReport;
+import com.example.notificator.stats.DayStat;
 import com.example.notificator.stats.StatsService;
+import com.example.notificator.stats.WeekOverview;
 import com.example.notificator.stats.WeeklyStats;
 import java.time.LocalDate;
 import com.example.notificator.service.ReminderSettings;
@@ -314,7 +318,180 @@ class CommandHandlerTest {
         BotReply reply = handler.handle(CHAT, "/week");
 
         assertTrue(reply.text().startsWith("📊 Неделя в процессе 02.11–07.11"), reply.text());
-        assertTrue(reply.buttons().isEmpty());
+        assertEquals(List.of(new ReplyButton("📅 Дела по дням", "days")), reply.buttons());
+    }
+
+    // ---------- /day ----------
+
+    private static final LocalDate MON = LocalDate.of(2026, 11, 2);
+    private static final LocalDate THU = LocalDate.of(2026, 11, 5);
+
+    /** Четверг 5 ноября: пн 2 из 3, вт дел нет, ср 1 из 1, чт (сегодня) 0 из 2. */
+    private static WeekOverview overview() {
+        return new WeekOverview(MON, THU, List.of(
+                new DayStat(MON, 3, 2), new DayStat(MON.plusDays(1), 0, 0),
+                new DayStat(MON.plusDays(2), 1, 1), new DayStat(THU, 2, 0)));
+    }
+
+    private void givenDay(LocalDate date, DayReport.Status status, boolean today, TodayItem... items) {
+        when(stats.dayReport(CHAT, date)).thenReturn(new DayReport(date, status, List.of(items), today));
+    }
+
+    @Test
+    void dayWithoutArgumentsShowsPickerWithOneButtonPerDay() {
+        when(stats.weekOverview(CHAT)).thenReturn(overview());
+
+        BotReply reply = handler.handle(CHAT, "/day");
+
+        assertEquals("📅 Выбери день этой недели (02.11–08.11):", reply.text());
+        assertEquals(List.of(
+                new ReplyButton("Пн 02.11 · 2 из 3", "day:2026-11-02"),
+                new ReplyButton("Вт 03.11 · дел нет", "day:2026-11-03"),
+                new ReplyButton("Ср 04.11 · 1 из 1", "day:2026-11-04"),
+                new ReplyButton("Чт 05.11 (сегодня) · 0 из 2", "day:2026-11-05")), reply.buttons());
+    }
+
+    @Test
+    void dayByWeekdayShowsPastDayWithDoneAndMissedTasks() {
+        when(stats.weekOverview(CHAT)).thenReturn(overview());
+        givenDay(MON, DayReport.Status.OK, false,
+                new TodayItem(1, "Читать", true), new TodayItem(2, "Зарядка", false), new TodayItem(3, "Сон", true));
+
+        BotReply reply = handler.handle(CHAT, "/day пн");
+
+        assertEquals("""
+                📅 Понедельник, 02.11
+
+                ✅ Читать
+                ❌ Зарядка
+                ✅ Сон
+
+                Выполнено 2 из 3 (67%)""", reply.text());
+        assertEquals(List.of(new ReplyButton("↩️ К дням недели", "days")), reply.buttons());
+    }
+
+    @Test
+    void dayViewOfTodayUsesPendingMarkAndPointsToToday() {
+        when(stats.weekOverview(CHAT)).thenReturn(overview());
+        givenDay(THU, DayReport.Status.OK, true, new TodayItem(5, "Читать", false), new TodayItem(6, "Сон", true));
+
+        String text = handler.handle(CHAT, "/day сегодня").text();
+
+        assertTrue(text.startsWith("📅 Четверг, 05.11 (сегодня)"), text);
+        assertTrue(text.contains("⬜ Читать"), text);
+        assertFalse(text.contains("❌"), text);
+        assertTrue(text.endsWith("Отмечать дела: /today"), text);
+    }
+
+    @Test
+    void dayWithNoTasksSaysSo() {
+        when(stats.weekOverview(CHAT)).thenReturn(overview());
+        givenDay(MON.plusDays(1), DayReport.Status.OK, false);
+
+        String text = handler.handle(CHAT, "/day вт").text();
+
+        assertEquals("📅 Вторник, 03.11\n\nВ этот день дел не было.", text);
+    }
+
+    @Test
+    void dayAcceptsDatesWeekdayNamesAndRelativeWords() {
+        when(stats.weekOverview(CHAT)).thenReturn(overview());
+        for (LocalDate d : List.of(MON, MON.plusDays(2), THU, THU.minusDays(1))) {
+            givenDay(d, DayReport.Status.OK, d.equals(THU));
+        }
+
+        for (String arg : new String[] {"5.11", "05.11", "5/11", "5.11.2026", "05.11.26", "сегодня", "ЧТ", "Четверг"}) {
+            handler.handle(CHAT, "/day " + arg);
+        }
+        handler.handle(CHAT, "/day вчера");
+        handler.handle(CHAT, "/day среда");
+        handler.handle(CHAT, "/day понедельник");
+
+        verify(stats, org.mockito.Mockito.times(8)).dayReport(CHAT, THU);
+        verify(stats, org.mockito.Mockito.times(2)).dayReport(CHAT, THU.minusDays(1)); // вчера и среда
+        verify(stats).dayReport(CHAT, MON);
+    }
+
+    @Test
+    void dayInFutureOfThisWeekIsRefused() {
+        when(stats.weekOverview(CHAT)).thenReturn(overview());
+        givenDay(LocalDate.of(2026, 11, 6), DayReport.Status.FUTURE, false);
+
+        assertEquals("Этот день ещё не наступил.", handler.handle(CHAT, "/day 6.11").text());
+    }
+
+    @Test
+    void dayOutsideCurrentWeekIsRefused() {
+        when(stats.weekOverview(CHAT)).thenReturn(overview());
+        givenDay(LocalDate.of(2026, 10, 20), DayReport.Status.OUT_OF_WEEK, false);
+
+        assertEquals("Можно смотреть только текущую неделю (02.11–08.11).", handler.handle(CHAT, "/day 20.10").text());
+    }
+
+    @Test
+    void dayWithUnknownFormatShowsExamples() {
+        when(stats.weekOverview(CHAT)).thenReturn(overview());
+
+        for (String bad : new String[] {"завтра", "31.02", "blabla", "5-11", "99.99"}) {
+            String text = handler.handle(CHAT, "/day " + bad).text();
+
+            assertTrue(text.startsWith("Не понял день «" + bad + "»"), text);
+        }
+        verify(stats, never()).dayReport(anyLong(), any());
+    }
+
+    @Test
+    void dayButtonShowsDayWithBackButton() {
+        givenDay(MON, DayReport.Status.OK, false, new TodayItem(1, "Читать", true));
+
+        CallbackResponse response = handler.handleCallback(CHAT, "day:2026-11-02");
+
+        assertNull(response.notice());
+        assertTrue(response.view().text().startsWith("📅 Понедельник, 02.11"), response.view().text());
+        assertEquals(List.of(new ReplyButton("↩️ К дням недели", "days")), response.view().buttons());
+    }
+
+    @Test
+    void dayButtonWithRefusedDateShowsNoticeAndPicker() {
+        when(stats.weekOverview(CHAT)).thenReturn(overview());
+        givenDay(LocalDate.of(2026, 10, 20), DayReport.Status.OUT_OF_WEEK, false);
+        givenDay(LocalDate.of(2026, 11, 6), DayReport.Status.FUTURE, false);
+
+        CallbackResponse outside = handler.handleCallback(CHAT, "day:2026-10-20");
+        CallbackResponse future = handler.handleCallback(CHAT, "day:2026-11-06");
+
+        assertEquals("Можно смотреть только текущую неделю (02.11–08.11).", outside.notice());
+        assertEquals("Этот день ещё не наступил.", future.notice());
+        assertTrue(outside.view().text().startsWith("📅 Выбери день"), outside.view().text());
+    }
+
+    @Test
+    void dayButtonWithGarbageDataIsIgnored() {
+        for (String data : new String[] {"day:", "day:abc", "day:2026-13-45", "day:2026-11-02;DROP"}) {
+            assertEquals("Неизвестное действие", handler.handleCallback(CHAT, data).notice());
+        }
+        verify(stats, never()).dayReport(anyLong(), any());
+    }
+
+    @Test
+    void daysButtonReturnsPicker() {
+        when(stats.weekOverview(CHAT)).thenReturn(overview());
+
+        CallbackResponse response = handler.handleCallback(CHAT, "days");
+
+        assertNull(response.notice());
+        assertEquals(4, response.view().buttons().size());
+    }
+
+    @Test
+    void dayFromUnregisteredUserAsksToPressStart() {
+        when(stats.weekOverview(CHAT)).thenThrow(new UserNotRegisteredException(CHAT));
+        when(stats.dayReport(anyLong(), any())).thenThrow(new UserNotRegisteredException(CHAT));
+
+        assertEquals("Сначала нажми /start.", handler.handle(CHAT, "/day").text());
+        assertEquals("Сначала нажми /start.", handler.handle(CHAT, "/day пн").text());
+        assertEquals("Сначала нажми /start", handler.handleCallback(CHAT, "day:2026-11-02").notice());
+        assertEquals("Сначала нажми /start", handler.handleCallback(CHAT, "days").notice());
     }
 
     @Test
