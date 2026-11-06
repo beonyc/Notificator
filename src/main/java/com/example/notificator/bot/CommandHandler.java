@@ -12,7 +12,6 @@ import com.example.notificator.stats.DayStat;
 import com.example.notificator.stats.ReportFormatter;
 import com.example.notificator.stats.StatsService;
 import com.example.notificator.stats.WeekOverview;
-import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -21,7 +20,6 @@ import java.time.format.TextStyle;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -65,25 +63,16 @@ public class CommandHandler {
     static final String REMINDERS_EDIT = "rem:edit";
     static final String REMINDERS_CANCEL = "rem:cancel";
 
-    /** Кнопка «Дела по дням» / «К дням недели» — выбор дня текущей недели — и префикс кнопки дня: «day:2026-11-05». */
+    /**
+     * Кнопки под отчётом /week: «Дела по дням» (выбор дня текущей недели), «К отчёту» (назад к отчёту)
+     * и кнопка дня с префиксом «day:2026-11-05». Просмотр прошлых дней доступен только из /week.
+     */
     static final String DAYS = "days";
+    static final String WEEK = "week";
     static final String DAY_PREFIX = "day:";
 
     private static final DateTimeFormatter SHORT_DATE = DateTimeFormatter.ofPattern("dd.MM");
     private static final Locale RU = Locale.forLanguageTag("ru");
-
-    /** День в команде /day: «5.11», «05/11», «5.11.2026» (год игнорируется — смотрим только текущую неделю). */
-    private static final Pattern DAY_MONTH = Pattern.compile("^(\\d{1,2})[./](\\d{1,2})(?:[./]\\d{2,4})?$");
-
-    /** Названия дней недели в команде /day -> номер дня недели (1 = понедельник). */
-    private static final Map<String, Integer> WEEKDAYS = Map.ofEntries(
-            Map.entry("пн", 1), Map.entry("понедельник", 1),
-            Map.entry("вт", 2), Map.entry("вторник", 2),
-            Map.entry("ср", 3), Map.entry("среда", 3),
-            Map.entry("чт", 4), Map.entry("четверг", 4),
-            Map.entry("пт", 5), Map.entry("пятница", 5),
-            Map.entry("сб", 6), Map.entry("суббота", 6),
-            Map.entry("вс", 7), Map.entry("воскресенье", 7));
 
     /** Время в команде /reminders: «9», «9:00», «09.30» (час 0–23, минуты 0–59 проверяются отдельно). */
     private static final Pattern TIME = Pattern.compile("^(\\d{1,2})(?:[:.](\\d{2}))?$");
@@ -95,8 +84,7 @@ public class CommandHandler {
             /add Читать 30 минут — добавить дело
             /today — дела на сегодня (с кнопками «выполнено»)
             /remove — убрать дело из списка
-            /week — статистика за текущую неделю и оценка продуктивности
-            /day — дела и их статус за выбранный день этой недели (/day пн, /day 5.11)
+            /week — статистика за неделю, оценка продуктивности и дела по дням
             /reminders — время напоминаний, выключить или включить""";
 
     private final TrackerService service;
@@ -148,9 +136,7 @@ public class CommandHandler {
                 case "/today" -> today(chatId);
                 case "/remove" -> remove(chatId);
                 case "/reminders" -> reminders(chatId, args);
-                case "/week" -> new BotReply(ReportFormatter.format(statsService.currentWeek(chatId), false),
-                        List.of(new ReplyButton("📅 Дела по дням", DAYS)));
-                case "/day" -> day(chatId, args);
+                case "/week" -> weekReport(chatId);
                 default -> BotReply.text("Не понял. " + HELP);
             };
         } catch (UserNotRegisteredException e) {
@@ -178,6 +164,8 @@ public class CommandHandler {
                     return removeAll(chatId);
                 case REMOVE_ALL_NO:
                     return new CallbackResponse("Отменено", remove(chatId));
+                case WEEK:
+                    return new CallbackResponse(null, weekReport(chatId));
                 case DAYS:
                     return new CallbackResponse(null, daysPicker(chatId));
                 case REMINDERS_EDIT:
@@ -420,22 +408,12 @@ public class CommandHandler {
     }
 
     /**
-     * Команда /day. Без аргументов показывает выбор дня текущей недели; с аргументом — сразу список дел
-     * за этот день: «/day пн», «/day 5.11», «/day вчера», «/day сегодня».
+     * Отчёт за текущую неделю (команда /week и кнопка «К отчёту»). Под ним кнопка перехода к просмотру
+     * дел по дням: просмотр прошлых дней доступен только отсюда, отдельной команды для него нет.
      */
-    private BotReply day(long chatId, String args) {
-        if (args.isEmpty()) {
-            return daysPicker(chatId);
-        }
-        WeekOverview week = statsService.weekOverview(chatId);
-        LocalDate date = resolveDay(args, week);
-        if (date == null) {
-            return BotReply.text("Не понял день «" + args + "». Примеры: /day пн, /day 5.11, /day вчера");
-        }
-        DayReport report = statsService.dayReport(chatId, date);
-        return report.status() == DayReport.Status.OK
-                ? dayView(report)
-                : BotReply.text(dayError(report.status(), week));
+    private BotReply weekReport(long chatId) {
+        return new BotReply(ReportFormatter.format(statsService.currentWeek(chatId), false),
+                List.of(new ReplyButton("📅 Дела по дням", DAYS)));
     }
 
     /** Нажатие кнопки дня («day:2026-11-05»). Дата приходит от клиента, поэтому проверяется сервисом. */
@@ -454,40 +432,6 @@ public class CommandHandler {
                 daysPicker(chatId));
     }
 
-    /** Превращает запрос пользователя в дату текущей недели; null — если формат непонятен. */
-    private static LocalDate resolveDay(String arg, WeekOverview week) {
-        String a = arg.trim().toLowerCase();
-        if (a.equals("сегодня")) {
-            return week.today();
-        }
-        if (a.equals("вчера")) {
-            return week.today().minusDays(1);
-        }
-        Integer weekday = WEEKDAYS.get(a);
-        if (weekday != null) {
-            return week.monday().plusDays(weekday - 1L);
-        }
-        Matcher m = DAY_MONTH.matcher(a);
-        if (!m.matches()) {
-            return null;
-        }
-        int day = Integer.parseInt(m.group(1));
-        int month = Integer.parseInt(m.group(2));
-        // Ищем число и месяц среди семи дней недели: так не нужно угадывать год на стыке годов.
-        for (int i = 0; i < 7; i++) {
-            LocalDate d = week.monday().plusDays(i);
-            if (d.getDayOfMonth() == day && d.getMonthValue() == month) {
-                return d;
-            }
-        }
-        try {
-            // Такого дня на этой неделе нет — вернём реальную дату, сервис ответит «не текущая неделя».
-            return LocalDate.of(week.today().getYear(), month, day);
-        } catch (DateTimeException e) {
-            return null; // например, 31.02
-        }
-    }
-
     private static String dayError(DayReport.Status status, WeekOverview week) {
         return status == DayReport.Status.FUTURE
                 ? "Этот день ещё не наступил."
@@ -495,7 +439,10 @@ public class CommandHandler {
                         + SHORT_DATE.format(week.sunday()) + ").";
     }
 
-    /** Выбор дня текущей недели: кнопка на каждый день от понедельника до сегодня с итогом дня. */
+    /**
+     * Выбор дня текущей недели: кнопка на каждый день от понедельника до сегодня с итогом дня
+     * и кнопка возврата к отчёту.
+     */
     private BotReply daysPicker(long chatId) {
         WeekOverview week = statsService.weekOverview(chatId);
         List<ReplyButton> buttons = new ArrayList<>();
@@ -506,6 +453,7 @@ public class CommandHandler {
                     + " · " + (d.total() == 0 ? "дел нет" : d.done() + " из " + d.total());
             buttons.add(new ReplyButton(title, DAY_PREFIX + d.date()));
         }
+        buttons.add(new ReplyButton("↩️ К отчёту", WEEK));
         return new BotReply("📅 Выбери день этой недели (" + SHORT_DATE.format(week.monday()) + "–"
                 + SHORT_DATE.format(week.sunday()) + "):", buttons);
     }
