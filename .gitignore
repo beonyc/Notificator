@@ -50,3 +50,7 @@ logs/
 
 # Личные заметки автора
 FORME.txt
+
+# Файлы Claude Code
+CLAUDE.md
+.claude/
