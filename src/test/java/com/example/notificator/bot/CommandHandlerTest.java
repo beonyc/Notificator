@@ -81,15 +81,11 @@ class CommandHandlerTest {
     }
 
     @Test
-    void addWithoutTitleShowsSeveralExamplesEachOnItsOwnLine() {
+    void addWithoutTitleShowsSingleExample() {
         List<String> lines = handler.handle(CHAT, "/add").text().lines().toList();
 
         List<String> examples = lines.stream().filter(l -> l.startsWith("<code>/add ")).toList();
-        assertEquals(List.of(
-                "<code>/add Читать 30 минут</code>",
-                "<code>/add Сделать зарядку</code>",
-                "<code>/add Выучить 10 английских слов</code>",
-                "<code>/add Позвонить родителям</code>"), examples);
+        assertEquals(List.of("<code>/add Почитать книгу</code>"), examples);
         // примеры не слиты в одну строку: в каждой строке ровно одна команда
         assertTrue(lines.stream().allMatch(l -> l.split("/add", -1).length <= 2), lines.toString());
     }
@@ -427,7 +423,7 @@ class CommandHandlerTest {
 
     @Test
     void addWithBlankTitleAlsoShowsExamples() {
-        assertTrue(handler.handle(CHAT, "/add    ").text().contains("<code>/add Сделать зарядку</code>"));
+        assertTrue(handler.handle(CHAT, "/add    ").text().contains("<code>/add Почитать книгу</code>"));
     }
 
     @Test
