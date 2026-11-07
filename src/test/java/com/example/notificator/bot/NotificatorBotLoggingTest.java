@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
@@ -18,7 +20,10 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
+import org.mockito.ArgumentCaptor;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.chat.Chat;
@@ -142,6 +147,67 @@ class NotificatorBotLoggingTest {
             assertEquals("12345", log.find("→ нажата кнопка").getMDCPropertyMap().get("chatId"));
         }
         assertNull(MDC.get("chatId"));
+    }
+
+    @Test
+    void rejectedEditFallsBackToSendingScreenAsNewMessage() throws TelegramApiException {
+        when(handler.handleCallback(CHAT, "menu")).thenReturn(new CallbackResponse(null,
+                new BotReply("Экран", List.of(new ReplyButton("Кнопка", "x")))));
+        doThrow(new TelegramApiException("Error executing EditMessageText query: [400] Bad Request: text must be non-empty"))
+                .when(client).execute(any(EditMessageText.class));
+
+        try (LogCapture log = new LogCapture(NotificatorBot.class)) {
+            bot.consume(updateWithCallback(99, "cb-1", "menu"));
+
+            ArgumentCaptor<SendMessage> sent = ArgumentCaptor.forClass(SendMessage.class);
+            verify(client).execute(sent.capture());
+            assertEquals("Экран", sent.getValue().getText());
+            assertEquals("HTML", sent.getValue().getParseMode());
+            assertEquals("12345", sent.getValue().getChatId());
+            assertEquals(1, ((InlineKeyboardMarkup) sent.getValue().getReplyMarkup()).getKeyboard().size());
+            assertEquals(Level.WARN, log.find("отправляю экран новым сообщением").getLevel());
+            assertTrue(log.contains("← экран новым сообщением ("), log.messages().toString());
+        }
+    }
+
+    @Test
+    void notModifiedIsHarmlessAndDoesNotSendDuplicate() throws TelegramApiException {
+        when(handler.handleCallback(CHAT, "menu")).thenReturn(new CallbackResponse(null, BotReply.text("Экран")));
+        doThrow(new TelegramApiException("[400] Bad Request: message is not modified: specified new message content "
+                + "and reply markup are exactly the same as a current content and reply markup of the message"))
+                .when(client).execute(any(EditMessageText.class));
+
+        try (LogCapture log = new LogCapture(NotificatorBot.class)) {
+            bot.consume(updateWithCallback(99, "cb-1", "menu"));
+
+            verify(client, never()).execute(any(SendMessage.class));
+            assertEquals(Level.INFO, log.find("не изменилось").getLevel());
+            assertFalse(log.events().stream().anyMatch(e -> e.getLevel() == Level.WARN), log.messages().toString());
+        }
+    }
+
+    @Test
+    void failedFallbackIsLoggedAndDoesNotCrashTheBot() throws TelegramApiException {
+        when(handler.handleCallback(CHAT, "menu")).thenReturn(new CallbackResponse(null, BotReply.text("Экран")));
+        doThrow(new TelegramApiException("[400] Bad Request: message to edit not found"))
+                .when(client).execute(any(EditMessageText.class));
+        doThrow(new TelegramApiException("нет сети")).when(client).execute(any(SendMessage.class));
+
+        try (LogCapture log = new LogCapture(NotificatorBot.class)) {
+            bot.consume(updateWithCallback(99, "cb-1", "menu"));
+
+            assertEquals(Level.ERROR, log.find("Не удалось отправить экран новым сообщением").getLevel());
+        }
+        assertNull(MDC.get("chatId"));
+    }
+
+    @Test
+    void editFallbackIsNotUsedWhenEditSucceeds() throws TelegramApiException {
+        when(handler.handleCallback(CHAT, "menu")).thenReturn(new CallbackResponse(null, BotReply.text("Экран")));
+
+        bot.consume(updateWithCallback(99, "cb-1", "menu"));
+
+        verify(client, never()).execute(any(SendMessage.class));
     }
 
     @Test

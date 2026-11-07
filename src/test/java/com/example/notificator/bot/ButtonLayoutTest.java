@@ -1,6 +1,7 @@
 package com.example.notificator.bot;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -15,6 +16,7 @@ import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.chat.Chat;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
@@ -45,6 +47,74 @@ class ButtonLayoutTest {
         assertEquals("data1", markup.getKeyboard().get(0).get(0).getCallbackData());
         assertEquals("data2", markup.getKeyboard().get(0).get(1).getCallbackData());
         assertEquals("data5", markup.getKeyboard().get(2).get(0).getCallbackData());
+    }
+
+    @Test
+    void wideButtonTakesWholeRowAndOthersKeepPairing() {
+        List<ReplyButton> items = List.of(
+                ReplyButton.wide("Длинная", "long"),
+                new ReplyButton("Раз", "a"), new ReplyButton("Два", "b"),
+                new ReplyButton("Три", "c"), new ReplyButton("Четыре", "d"));
+
+        InlineKeyboardMarkup markup = NotificatorBot.toMarkup(new BotReply("т", items, 2));
+
+        assertEquals(List.of(1, 2, 2), rowSizes(markup));
+        assertEquals("long", markup.getKeyboard().get(0).get(0).getCallbackData());
+        assertEquals("a", markup.getKeyboard().get(1).get(0).getCallbackData());
+        assertEquals("d", markup.getKeyboard().get(2).get(1).getCallbackData());
+    }
+
+    @Test
+    void wideButtonInTheMiddleClosesThePendingRowAndStartsNewOne() {
+        List<ReplyButton> items = List.of(
+                new ReplyButton("Раз", "a"),
+                ReplyButton.wide("Длинная", "long"),
+                new ReplyButton("Два", "b"), new ReplyButton("Три", "c"), new ReplyButton("Четыре", "d"));
+
+        InlineKeyboardMarkup markup = NotificatorBot.toMarkup(new BotReply("т", items, 2));
+
+        assertEquals(List.of(1, 1, 2, 1), rowSizes(markup)); // «Раз» осталась одна, «Длинная» — отдельно
+    }
+
+    @Test
+    void wideButtonStaysAloneEvenInSingleColumnLayout() {
+        List<ReplyButton> items = List.of(ReplyButton.wide("Длинная", "long"), new ReplyButton("Раз", "a"));
+
+        assertEquals(List.of(1, 1), rowSizes(NotificatorBot.toMarkup(new BotReply("т", items))));
+    }
+
+    @Test
+    void consecutiveWideButtonsEachGetOwnRow() {
+        List<ReplyButton> items = List.of(
+                ReplyButton.wide("Раз", "a"), ReplyButton.wide("Два", "b"), new ReplyButton("Три", "c"));
+
+        assertEquals(List.of(1, 1, 1), rowSizes(NotificatorBot.toMarkup(new BotReply("т", items, 2))));
+    }
+
+    @Test
+    void wideFlagDefaultsToFalseForOrdinaryConstructors() {
+        assertEquals(false, new ReplyButton("т", "d").wide());
+        assertEquals(false, new ReplyButton("т", "d", ReplyButton.DANGER).wide());
+        assertEquals(true, ReplyButton.wide("т", "d").wide());
+        assertNull(ReplyButton.wide("т", "d").style());
+    }
+
+    @Test
+    void mainMenuFromHandlerHasWideTodayButtonOnTopAndFourEqualButtonsBelow() {
+        CommandHandler handler = new CommandHandler(
+                mock(com.example.notificator.service.TrackerService.class),
+                mock(com.example.notificator.service.ReminderSettingsService.class),
+                mock(com.example.notificator.stats.StatsService.class));
+
+        BotReply menu = handler.handle(1L, "/menu");
+        InlineKeyboardMarkup markup = NotificatorBot.toMarkup(menu);
+
+        assertEquals(List.of(1, 2, 2), rowSizes(markup));
+        assertEquals("today", markup.getKeyboard().get(0).get(0).getCallbackData());
+        assertEquals(List.of("add", "remove"), markup.getKeyboard().get(1).stream()
+                .map(InlineKeyboardButton::getCallbackData).toList());
+        assertEquals(List.of("week", "reminders"), markup.getKeyboard().get(2).stream()
+                .map(InlineKeyboardButton::getCallbackData).toList());
     }
 
     @Test

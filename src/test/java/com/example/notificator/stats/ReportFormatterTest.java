@@ -68,7 +68,7 @@ class ReportFormatterTest {
                 List.of(e(MON, 1, "Д", false)), MON, SUN, false), true);
 
         assertTrue(fire.contains("— 🔥 Огонь"), fire);
-        assertTrue(lazy.contains("— 😴 Проленился"), lazy);
+        assertTrue(lazy.contains("— 😴 Лень победила"), lazy);
     }
 
     @Test
