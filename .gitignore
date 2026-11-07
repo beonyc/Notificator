@@ -47,3 +47,6 @@ application-local.yaml
 application-local.yml
 # Логи приложения (шаги пользователей и бота)
 logs/
+
+# Личные заметки автора
+FORME.txt
